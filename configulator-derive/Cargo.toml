@@ -1,0 +1,15 @@
+[package]
+name = "configulator-derive"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Derive macro for configulator"
+repository = "https://github.com/USA-RedDragon/configulator-rs"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"

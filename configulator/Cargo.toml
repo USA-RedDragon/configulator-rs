@@ -1,0 +1,16 @@
+[package]
+name = "configulator"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A configuration loader that populates a struct from YAML files, environment variables, and CLI flags"
+repository = "https://github.com/USA-RedDragon/configulator-rs"
+
+[dependencies]
+configulator-derive = { path = "../configulator-derive" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml_ng = "0.9"
+clap = { version = "4", features = ["derive", "string"] }
+
+[dev-dependencies]
+tempfile = "3"
