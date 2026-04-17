@@ -46,6 +46,7 @@ jobs:
           submodules: true
       - name: Test
         run: |
+          rustup target add ${{ matrix.target }}
           cargo test --all --target ${{ matrix.target }} --release
 
   coverage:
@@ -139,6 +140,7 @@ jobs:
           submodules: true
       - name: Build
         run: |
+          rustup target add ${{ matrix.target }}
           cargo build --target ${{ matrix.target }} --release
         env:
           PKG_VERSION: ${{ needs.version.outputs.version }}
