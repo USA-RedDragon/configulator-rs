@@ -1,0 +1,158 @@
+name: ci
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.ref }}'
+  cancel-in-progress: false
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  test:
+    name: Test ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Linux Targets ---
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+
+          # --- Windows Targets ---
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+
+          # --- macOS Targets ---
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: true
+      - name: Test
+        run: |
+          cargo test --all --target ${{ matrix.target }} --release
+
+  coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: true
+      - name: Install Rust nightly
+        run: |
+          rustup toolchain install nightly --component llvm-tools-preview
+          rustup default nightly
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Generate coverage
+        run: cargo llvm-cov --lcov --output-path lcov.info
+      - uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
+  test-results:
+    if: always()
+    needs: [ test, coverage ]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          results=("${{ needs.test.result }}" "${{ needs.coverage.result }}")
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "One or more jobs failed" >&2
+              exit 1
+            fi
+          done
+          echo "All tests passed"
+
+  version:
+    name: Determine version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          # push to deploy branch returns dev-$SHA
+          # tag pushes return the tag
+          SHA="$(cut -c-8 <<< "$GITHUB_SHA")"
+          if [[ "$GITHUB_REF_NAME" == "main" ]]; then
+            echo "VERSION=dev-${SHA}" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_REF" == 'refs/tags/'* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "VERSION=${VERSION}-${SHA}" >> $GITHUB_OUTPUT
+          fi
+      - name: Print version
+        run: |
+          echo Building version: ${{ steps.version.outputs.VERSION }}
+
+  build:
+    needs: [ version ]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Linux Targets ---
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+
+          # --- Windows Targets ---
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+
+          # --- macOS Targets ---
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: true
+      - name: Build
+        run: |
+          cargo build --target ${{ matrix.target }} --release
+        env:
+          PKG_VERSION: ${{ needs.version.outputs.version }}
+
+  build-results:
+    if: always()
+    needs: [ build ]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          result="${{ needs.build.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "All builds succeeded"
+          else
+            echo "One or more builds failed" >&2
+            exit 1
+          fi
