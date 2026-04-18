@@ -154,8 +154,13 @@ fn parse_configulator_attrs(attrs: &[syn::Attribute]) -> Result<FieldConfigAttrs
                 let lit: syn::LitStr = value.parse()?;
                 result.description = Some(lit.value());
             } else {
-                return Err(meta.error("unknown configulator attribute; \
-                    expected `name`, `default`, or `description`"));
+                let name = meta.path.get_ident()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                return Err(meta.error(format_args!(
+                    "unknown configulator attribute `{name}`; \
+                     expected `name`, `default`, or `description`",
+                )));
             }
             Ok(())
         })?;
