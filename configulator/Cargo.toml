@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.70"
 license = "MIT"
-description = "A configuration loader that populates a struct from YAML files, environment variables, and CLI flags"
+description = "A configuration loader that populates a struct from config files, environment variables, and CLI flags"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
 categories = ["config"]
-keywords = ["config", "configuration", "cli", "environment", "yaml"]
+keywords = ["config", "configuration", "cli", "environment", "file"]
 readme = "../README.md"
 exclude = [".github/", "target/"]
 
@@ -16,17 +16,18 @@ name = "configulator"
 
 [features]
 default = ["file", "cli", "env"]
-file = ["dep:serde_yaml_ng"]
+file = ["dep:serde"]
 cli = ["dep:clap"]
 env = []
 
 [dependencies]
 configulator-derive = { version = "0.1.0", path = "../configulator-derive" }
-serde_yaml_ng = { version = "0.10", optional = true }
 clap = { version = "4", features = ["string"], optional = true }
+serde = { version = "1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+serde_yaml_ng = "0.10"
 
 [[example]]
 name = "basic"

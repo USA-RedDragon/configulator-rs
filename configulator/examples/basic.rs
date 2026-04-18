@@ -1,5 +1,6 @@
 use configulator::{
-    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions, FileOptions, Validate,
+    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions,
+    FileOptions, Validate, serde_loader,
 };
 
 #[derive(Config, Default, Debug)]
@@ -46,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_file(FileOptions {
             paths: vec!["config.yaml".into(), "/etc/myapp/config.yaml".into()],
             error_if_not_found: false,
+            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
         })
         .with_environment_variables(EnvironmentVariableOptions {
             prefix: "MYAPP".into(),

@@ -59,7 +59,10 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         }
     }
 
-    /// Enable loading from a YAML config file.
+    /// Enable loading from a config file.
+    ///
+    /// The [`FileOptions`] must include a [`FileLoader`](crate::FileLoader)
+    /// implementation that parses the file contents.
     #[cfg(feature = "file")]
     #[must_use]
     pub fn with_file(mut self, opts: FileOptions) -> Self {
@@ -145,15 +148,13 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         #[cfg(feature = "file")]
         {
             let mut file_opts = self.file_opts;
-            // Prepend --config path if CLI provided one
+            // Prepend --config path if CLI provided one and .with_file() was called
             #[cfg(feature = "cli")]
-            if let Some(ref cli_vals) = cli_values {
-                if let Some(ConfigValue::Scalar(path)) = cli_vals.get("__config_file__") {
-                    let opts = file_opts.get_or_insert_with(|| FileOptions {
-                        paths: Vec::new(),
-                        error_if_not_found: false,
-                    });
-                    opts.paths.insert(0, PathBuf::from(path));
+            if let Some(ref mut opts) = file_opts {
+                if let Some(ref cli_vals) = cli_values {
+                    if let Some(ConfigValue::Scalar(path)) = cli_vals.get("__config_file__") {
+                        opts.paths.insert(0, PathBuf::from(path));
+                    }
                 }
             }
             if let Some(ref opts) = file_opts {

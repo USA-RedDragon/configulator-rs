@@ -18,7 +18,7 @@ use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, PathArguments, Gen
 /// Falls back to field name if no `name` attribute is specified.
 ///
 /// Scalar field types must implement `FromStr + Default`. Nested struct types must also
-/// derive `Config` — detection is automatic at compile time.
+/// derive `Config`, detection is automatic at compile time.
 #[proc_macro_derive(Config, attributes(configulator))]
 pub fn derive_config(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -211,7 +211,7 @@ fn classify_type(ty: &Type) -> TypeKind {
                         return TypeKind::Vec(Box::new(inner.clone()));
                     }
                 }
-                // Vec without type argument — will produce a compile error downstream
+                // Vec without type argument will produce a compile error downstream
                 return TypeKind::Other;
             }
         }

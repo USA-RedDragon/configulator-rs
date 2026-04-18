@@ -2,7 +2,68 @@ use crate::error::ConfigulatorError;
 use crate::options::FileOptions;
 use crate::value_map::{ConfigValue, ValueMap};
 
-/// Load configuration from the first YAML file found in the given paths.
+/// Trait for parsing file contents into a [`ValueMap`].
+///
+/// Implement this for any configuration format you want to support
+/// (YAML, TOML, JSON, etc.).
+///
+/// For formats supported by [serde](https://serde.rs), use [`serde_loader`]
+/// instead of implementing this trait manually.
+pub trait FileLoader: Send + Sync {
+    /// Parse the raw file contents into a [`ValueMap`].
+    fn load(&self, contents: &str) -> Result<ValueMap, ConfigulatorError>;
+}
+
+/// A [`FileLoader`] backed by any serde-compatible deserializer.
+///
+/// Created via [`serde_loader`]. Accepts a closure that deserializes
+/// a `&str` into a [`ConfigValue`].
+pub struct SerdeLoader<F>(F);
+
+impl<F, E> FileLoader for SerdeLoader<F>
+where
+    F: Fn(&str) -> Result<ConfigValue, E> + Send + Sync,
+    E: std::fmt::Display,
+{
+    fn load(&self, contents: &str) -> Result<ValueMap, ConfigulatorError> {
+        let value = (self.0)(contents)
+            .map_err(|e| ConfigulatorError::FileError(e.to_string()))?;
+        match value {
+            ConfigValue::Nested(map) => Ok(map),
+            _ => Err(ConfigulatorError::FileError(
+                "config file root must be a mapping/table".into(),
+            )),
+        }
+    }
+}
+
+/// Create a [`FileLoader`] from any serde-compatible deserializer.
+///
+/// This is the easiest way to support a file format. Pass a closure
+/// that calls the format crate's `from_str` function:
+///
+/// ```rust,no_run
+/// use configulator::{serde_loader, FileOptions};
+///
+/// let opts = FileOptions {
+///     paths: vec!["config.yaml".into()],
+///     error_if_not_found: false,
+///     // YAML
+///     loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+/// };
+/// ```
+///
+/// Works with any format: `serde_json::from_str`, `toml::from_str`, etc.
+pub fn serde_loader<F, E>(f: F) -> Box<dyn FileLoader>
+where
+    F: Fn(&str) -> Result<ConfigValue, E> + Send + Sync + 'static,
+    E: std::fmt::Display + 'static,
+{
+    Box::new(SerdeLoader(f))
+}
+
+/// Load configuration from the first file found in the given paths,
+/// using the loader specified in [`FileOptions`].
 pub fn load_from_file(opts: &FileOptions) -> Result<ValueMap, ConfigulatorError> {
     let mut contents = None;
     for path in &opts.paths {
@@ -31,50 +92,5 @@ pub fn load_from_file(opts: &FileOptions) -> Result<ValueMap, ConfigulatorError>
         }
     };
 
-    let yaml_value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&contents)
-        .map_err(|e| ConfigulatorError::FileError(e.to_string()))?;
-
-    Ok(yaml_to_value_map(&yaml_value))
-}
-
-fn yaml_to_value_map(value: &serde_yaml_ng::Value) -> ValueMap {
-    let mut map = ValueMap::new();
-    if let serde_yaml_ng::Value::Mapping(mapping) = value {
-        for (k, v) in mapping {
-            let key = match k {
-                serde_yaml_ng::Value::String(s) => s.clone(),
-                other => format!("{other:?}"),
-            };
-            map.insert(key, yaml_value_to_config_value(v));
-        }
-    }
-    map
-}
-
-fn yaml_value_to_config_value(value: &serde_yaml_ng::Value) -> ConfigValue {
-    match value {
-        serde_yaml_ng::Value::Mapping(_) => ConfigValue::Nested(yaml_to_value_map(value)),
-        serde_yaml_ng::Value::Sequence(seq) => {
-            let items: Vec<String> = seq
-                .iter()
-                .map(yaml_scalar_to_string)
-                .collect();
-            ConfigValue::List(items)
-        }
-        other => ConfigValue::Scalar(yaml_scalar_to_string(other)),
-    }
-}
-
-fn yaml_scalar_to_string(value: &serde_yaml_ng::Value) -> String {
-    match value {
-        serde_yaml_ng::Value::String(s) => s.clone(),
-        serde_yaml_ng::Value::Bool(b) => b.to_string(),
-        serde_yaml_ng::Value::Number(n) => n.to_string(),
-        serde_yaml_ng::Value::Null => String::new(),
-        // Tagged values, sequences, and mappings in scalar position are
-        // unexpected — surface them as debug strings rather than silently
-        // dropping them. The calling code will likely fail at parse time,
-        // giving the user a visible error.
-        other => format!("{other:?}"),
-    }
+    opts.loader.load(&contents)
 }

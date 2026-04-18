@@ -114,7 +114,7 @@ pub fn parse_nested<T: FromValueMap + Default>(
 // trait methods.
 
 /// Helper type for compile-time detection of nested structs vs scalars.
-/// Used by generated code — not intended for direct use.
+/// Used by generated code, not intended for direct use.
 pub struct ConfigDetect<T>(pub PhantomData<T>);
 
 /// Inherent methods for nested struct types. These take priority over the

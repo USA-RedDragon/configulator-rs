@@ -161,6 +161,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load()
             .unwrap();
@@ -185,6 +186,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load()
             .unwrap();
@@ -201,6 +203,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![PathBuf::from("/nonexistent/config.yaml")],
                 error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load()
             .unwrap();
@@ -216,6 +219,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![PathBuf::from("/nonexistent/config.yaml")],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load();
 
@@ -239,6 +243,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file1.to_path_buf(), file2.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load()
             .unwrap();
@@ -379,6 +384,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load()
             .unwrap();
@@ -404,6 +410,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .with_environment_variables(EnvironmentVariableOptions {
                 prefix: "TEST4".into(),
@@ -435,6 +442,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .with_environment_variables(EnvironmentVariableOptions {
                 prefix: "TEST5".into(),
@@ -528,6 +536,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .load()
             .unwrap();
@@ -573,6 +582,7 @@ mod tests {
             .with_file(FileOptions {
                 paths: vec![],
                 error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
             .with_cli_flags(CLIFlagOptions { separator: ".".into() })
             .with_cli_args(vec![

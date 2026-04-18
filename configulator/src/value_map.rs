@@ -1,5 +1,79 @@
 use std::collections::HashMap;
 
+#[cfg(feature = "file")]
+mod serde_impl {
+    use super::ConfigValue;
+    use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+    use std::fmt;
+
+    struct ConfigValueVisitor;
+
+    impl<'de> Visitor<'de> for ConfigValueVisitor {
+        type Value = ConfigValue;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("any valid configuration value")
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(v.to_string()))
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(v.to_string()))
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(v.to_string()))
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(v.to_string()))
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(v.to_owned()))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(v))
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(String::new()))
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<ConfigValue, E> {
+            Ok(ConfigValue::Scalar(String::new()))
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<ConfigValue, A::Error> {
+            let mut items = Vec::new();
+            while let Some(val) = seq.next_element::<ConfigValue>()? {
+                match val {
+                    ConfigValue::Scalar(s) => items.push(s),
+                    other => items.push(format!("{other:?}")),
+                }
+            }
+            Ok(ConfigValue::List(items))
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ConfigValue, A::Error> {
+            let mut result = super::ValueMap::new();
+            while let Some((key, value)) = map.next_entry::<String, ConfigValue>()? {
+                result.insert(key, value);
+            }
+            Ok(ConfigValue::Nested(result))
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ConfigValue {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_any(ConfigValueVisitor)
+        }
+    }
+}
+
 /// Intermediate representation of configuration values from any source.
 /// Used to merge values from files, env vars, and CLI flags before
 /// converting to the final config struct.
@@ -28,7 +102,7 @@ pub fn merge_value_maps(target: &mut ValueMap, source: &ValueMap) {
                 if let ConfigValue::Nested(target_nested) = entry {
                     merge_value_maps(target_nested, source_nested);
                 } else {
-                    // Source is nested but target isn't — source wins
+                    // Source is nested but target isn't, source wins
                     *entry = ConfigValue::Nested(source_nested.clone());
                 }
             }

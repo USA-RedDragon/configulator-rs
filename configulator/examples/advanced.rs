@@ -1,5 +1,6 @@
 use configulator::{
-    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions, FileOptions, Validate,
+    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions,
+    FileOptions, Validate, serde_loader,
 };
 use std::fmt;
 use std::path::PathBuf;
@@ -49,26 +50,26 @@ impl fmt::Display for LogLevel {
 
 #[derive(Config, Default, Debug)]
 struct ServerConfig {
-    /// Bind address — string that gets validated as an IP address
+    /// Bind address - string that gets validated as an IP address
     #[configulator(name = "bind-address", default = "127.0.0.1", description = "Address to bind to")]
     bind_address: String,
 
     #[configulator(name = "port", default = "8080", description = "Listen port")]
     port: u16,
 
-    /// Custom enum type — just needs FromStr + Default
+    /// Custom enum type - just needs FromStr + Default
     #[configulator(name = "log-level", default = "info", description = "Log verbosity")]
     log_level: LogLevel,
 
-    /// PathBuf — another stdlib type with FromStr + Default
+    /// PathBuf - another stdlib type with FromStr + Default
     #[configulator(name = "data-dir", default = "/var/lib/myapp", description = "Data directory")]
     data_dir: PathBuf,
 
-    /// Vec of strings — validated as IP addresses
+    /// Vec of strings - validated as IP addresses
     #[configulator(name = "allowed-ips", default = "127.0.0.1")]
     allowed_ips: Vec<String>,
 
-    /// Nested struct — automatically detected because DbConfig derives Config
+    /// Nested struct - automatically detected because DbConfig derives Config
     #[configulator(name = "database")]
     database: DbConfig,
 
@@ -117,6 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_file(FileOptions {
             paths: vec!["server.yaml".into()],
             error_if_not_found: false,
+            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
         })
         .with_environment_variables(EnvironmentVariableOptions {
             prefix: "SERVER".into(),

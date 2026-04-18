@@ -1,13 +1,31 @@
 use std::path::PathBuf;
 
-/// Options for loading configuration from a YAML file.
 #[cfg(feature = "file")]
-#[derive(Debug, Clone)]
+use crate::file::FileLoader;
+
+/// Options for loading configuration from a file.
+///
+/// Users must supply a [`FileLoader`] implementation that knows how to
+/// parse the file contents into a [`ValueMap`](crate::ValueMap).
+#[cfg(feature = "file")]
 pub struct FileOptions {
     /// List of file paths to search. The first one found is used.
     pub paths: Vec<PathBuf>,
     /// If true, return an error if no config file is found.
     pub error_if_not_found: bool,
+    /// The loader that parses file contents into configuration values.
+    pub loader: Box<dyn FileLoader>,
+}
+
+#[cfg(feature = "file")]
+impl std::fmt::Debug for FileOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileOptions")
+            .field("paths", &self.paths)
+            .field("error_if_not_found", &self.error_if_not_found)
+            .field("loader", &"<dyn FileLoader>")
+            .finish()
+    }
 }
 
 /// Options for loading configuration from environment variables.

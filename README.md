@@ -8,13 +8,17 @@ A simple configuration manager for Rust applications with derive macro support.
 
 - Supports configuration from multiple sources with clear precedence:
   1. Default values (lowest)
-  2. YAML config files
+  2. Config files (any serde format via `serde_loader`)
   3. Environment variables
   4. CLI flags (highest)
 - `#[derive(Config)]` macro for declarative configuration structs
-- Nested struct support with automatic detection
-- Optional validation via the `Validate` trait
-- Any type implementing `FromStr + Default` works as a field type
+- Any serde-compatible file format - YAML, TOML, JSON, with a one-liner
+- Pluggable file format support - bring your own parser via [`FileLoader`]
+- Nested struct support
+- [`Vec<T>`](Vec) list fields
+- Custom types - anything implementing [`FromStr`](std::str::FromStr) + [`Default`]
+- Optional validation via the [`Validate`] trait
+- Boolean CLI flags (`--debug` sets true, `--debug false` sets false)
 
 ## Supported Types
 
@@ -34,15 +38,15 @@ configulator-rs = "0.1"
 ```
 
 > [!NOTE]
-> Because the configuration options are expressed as different cases (i.e. `http.host` in YAML would be `HTTP__HOST` in environment variables), this library cannot be used for configurations that contain the same field name in different cases.
+> Because the configuration options are expressed as different cases (i.e. `http.host` in a config file would be `HTTP__HOST` in environment variables), this library cannot be used for configurations that contain the same field name in different cases.
 
 ### Derive Attributes
 
 This library uses the `#[configulator(...)]` attribute with the following keys:
 
-- `name` — The config key name (defaults to the field name)
-- `default` — Default value as a string literal
-- `description` — Help text shown in CLI `--help` output
+- `name` - The config key name (defaults to the field name)
+- `default` - Default value as a string literal
+- `description` - Help text shown in CLI `--help` output
 
 ```rust
 // Field appears in config files, env vars, and CLI flags as "my-name".
@@ -62,7 +66,9 @@ my_name: u32,
 
 ```rust
 use configulator::{
-    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions, FileOptions, Validate,
+    CLIFlagOptions, Config, Configulator,
+    EnvironmentVariableOptions, FileOptions, Validate,
+    serde_loader,
 };
 
 #[derive(Config, Default, Debug)]
@@ -106,6 +112,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_file(FileOptions {
             paths: vec!["config.yaml".into(), "/etc/myapp/config.yaml".into()],
             error_if_not_found: false,
+            // Any serde-compatible format works: serde_json, toml, etc.
+            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
         })
         .with_environment_variables(EnvironmentVariableOptions {
             prefix: "MYAPP".into(),
@@ -124,18 +132,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Configuration Sources
 
-#### YAML Files
+#### Config Files
+
+Configulator is format-agnostic, pass any serde-compatible deserializer via
+`serde_loader`, or implement the `FileLoader` trait for full control.
+YAML, TOML, JSON, and any other serde format work out of the box.
 
 Provide a list of paths to search. The first file found is used.
 
 ```rust
+// YAML
 .with_file(FileOptions {
     paths: vec!["config.yaml".into()],
     error_if_not_found: false,
+    loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+})
+
+// TOML
+.with_file(FileOptions {
+    paths: vec!["config.toml".into()],
+    error_if_not_found: false,
+    loader: serde_loader(|s| toml::from_str(s)),
+})
+
+// JSON
+.with_file(FileOptions {
+    paths: vec!["config.json".into()],
+    error_if_not_found: false,
+    loader: serde_loader(|s| serde_json::from_str(s)),
 })
 ```
 
-The CLI also accepts `--config` / `-c` to specify a config file path at runtime.
+The CLI also accepts `--config` / `-c` to specify a config file path at runtime
+(requires calling `.with_file()` first).
 
 #### Environment Variables
 
@@ -174,3 +203,21 @@ You can also provide a custom `clap::Command` to set the app name, version, or a
 ### Validation
 
 Implement the `Validate` trait and call `.load()` to validate after loading. Use `.load_without_validation()` to skip validation.
+
+### Feature Flags
+
+Configulator uses feature flags to keep dependencies minimal. All features are
+enabled by default.
+
+| Feature | Description                                                            | Dependencies |
+|---------|------------------------------------------------------------------------|--------------|
+| `file`  | Config file loading (`FileOptions`, `serde_loader`, `--config` flag)   | `serde`      |
+| `cli`   | CLI flag parsing via clap                                              | `clap`       |
+| `env`   | Environment variable loading                                           | -            |
+
+To opt out of features you don't need:
+
+```toml
+[dependencies]
+configulator-rs = { version = "0.1", default-features = false, features = ["env"] }
+```
