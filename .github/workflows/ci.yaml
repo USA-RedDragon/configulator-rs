@@ -46,6 +46,17 @@ jobs:
           rustup target add ${{ matrix.target }}
           cargo test --all --target ${{ matrix.target }} --release
 
+  docs:
+    name: Build docs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Build docs
+        run: |
+          rustup toolchain add nightly
+          RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --no-deps --features file,cli,env
+
   coverage:
     runs-on: ubuntu-24.04
     steps:
