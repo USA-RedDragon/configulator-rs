@@ -26,9 +26,9 @@ fn load_fields_from_env(
     let mut map = ValueMap::new();
 
     for field in fields {
+        let sep = if prefix.is_empty() { "" } else { separator };
         let env_key = format!(
             "{prefix}{sep}{name}",
-            sep = if prefix.is_empty() { "" } else { separator },
             name = field.config_name.to_uppercase().replace('-', "_"),
         );
 
