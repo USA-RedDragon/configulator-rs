@@ -17,8 +17,8 @@ use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, PathArguments, Gen
 /// Supports `#[configulator(name = "...", default = "...", description = "...")]` attributes.
 /// Falls back to field name if no `name` attribute is specified.
 ///
-/// Scalar field types must implement `FromStr + Default`. Nested struct types must also
-/// derive `Config`, detection is automatic at compile time.
+/// Scalar field types must implement [`FromStr`](std::str::FromStr) + `Default`. Nested struct
+/// types must also derive `Config`, detection is automatic at compile time.
 #[proc_macro_derive(Config, attributes(configulator))]
 pub fn derive_config(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

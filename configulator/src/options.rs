@@ -6,7 +6,8 @@ use crate::file::FileLoader;
 /// Options for loading configuration from a file.
 ///
 /// Users must supply a [`FileLoader`] implementation that knows how to
-/// parse the file contents into a [`ValueMap`](crate::ValueMap).
+/// parse the file contents.
+/// Use [`serde_loader`](crate::serde_loader) for any serde-compatible format.
 #[cfg(feature = "file")]
 pub struct FileOptions {
     /// List of file paths to search. The first one found is used.

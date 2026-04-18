@@ -168,7 +168,7 @@
 //!
 //! ### Config Files
 //!
-//! Configulator is format-agnostic — pass any serde-compatible deserializer via
+//! Configulator is format-agnostic, pass any serde-compatible deserializer via
 //! [`serde_loader`], or implement the [`FileLoader`] trait for full control.
 //! YAML, TOML, JSON, and any other serde format work out of the box.
 //!
@@ -198,7 +198,7 @@
 //! ```
 //!
 //! The CLI also accepts `--config` / `-c` to specify a config file path at runtime
-//! (requires calling `.with_file()` first).
+//! (requires calling [`.with_file()`](Configulator::with_file) first).
 //!
 //! ### Environment Variables
 //!
@@ -240,8 +240,8 @@
 //!
 //! ## Validation
 //!
-//! Implement the [`Validate`] trait and call `.load()` to validate after loading.
-//! Use `.load_without_validation()` to skip validation.
+//! Implement the [`Validate`] trait and call [`.load()`](Configulator::load) to validate after loading.
+//! Use [`.load_without_validation()`](Configulator::load_without_validation) to skip validation.
 //!
 //! ## Feature Flags
 //!
@@ -252,7 +252,7 @@
 //! |---------|----------------------------------------------------------------------|--------------|
 //! | `file`  | Config file loading (`FileOptions`, `serde_loader`, `--config` flag) | `serde`      |
 //! | `cli`   | CLI flag parsing via clap                                            | `clap`       |
-//! | `env`   | Environment variable loading                                         | —            |
+//! | `env`   | Environment variable loading                                         | -            |
 //!
 //! To opt out of features you don't need:
 //!

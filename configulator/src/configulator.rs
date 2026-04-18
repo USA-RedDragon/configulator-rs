@@ -33,7 +33,7 @@ pub struct Configulator<C> {
     env_opts: Option<EnvironmentVariableOptions>,
     #[cfg(feature = "cli")]
     cli_opts: Option<CLIFlagOptions>,
-    #[cfg(feature = "cli")]
+    #[cfg(feature = "testing")]
     cli_args: Option<Vec<String>>,
     #[cfg(feature = "cli")]
     cli_command: Option<clap::Command>,
@@ -51,7 +51,7 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
             env_opts: None,
             #[cfg(feature = "cli")]
             cli_opts: None,
-            #[cfg(feature = "cli")]
+            #[cfg(feature = "testing")]
             cli_args: None,
             #[cfg(feature = "cli")]
             cli_command: None,
@@ -62,7 +62,8 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
     /// Enable loading from a config file.
     ///
     /// The [`FileOptions`] must include a [`FileLoader`](crate::FileLoader)
-    /// implementation that parses the file contents.
+    /// implementation that parses the file contents. Use [`serde_loader`](crate::serde_loader)
+    /// for any serde-compatible format.
     #[cfg(feature = "file")]
     #[must_use]
     pub fn with_file(mut self, opts: FileOptions) -> Self {
@@ -87,7 +88,7 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
     }
 
     /// Override CLI args (for testing). If not called, uses `std::env::args()`.
-    #[cfg(feature = "cli")]
+    #[cfg(feature = "testing")]
     #[must_use]
     pub fn with_cli_args(mut self, args: Vec<String>) -> Self {
         self.cli_args = Some(args);
@@ -187,12 +188,17 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         C::from_value_map(&defaults)
     }
 
-    #[cfg(feature = "cli")]
+    #[cfg(all(feature = "cli", feature = "testing"))]
     fn get_cli_args(&self) -> Vec<String> {
         match &self.cli_args {
             Some(args) => args.clone(),
             None => std::env::args().skip(1).collect(),
         }
+    }
+
+    #[cfg(all(feature = "cli", not(feature = "testing")))]
+    fn get_cli_args(&self) -> Vec<String> {
+        std::env::args().skip(1).collect()
     }
 }
 

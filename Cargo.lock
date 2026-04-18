@@ -118,6 +118,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "configulator-derive",
+ "configulator-rs",
  "serde",
  "serde_yaml_ng",
  "tempfile",

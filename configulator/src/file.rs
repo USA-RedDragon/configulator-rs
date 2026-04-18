@@ -2,7 +2,7 @@ use crate::error::ConfigulatorError;
 use crate::options::FileOptions;
 use crate::value_map::{ConfigValue, ValueMap};
 
-/// Trait for parsing file contents into a [`ValueMap`].
+/// Trait for parsing file contents into configuration values.
 ///
 /// Implement this for any configuration format you want to support
 /// (YAML, TOML, JSON, etc.).
@@ -10,7 +10,7 @@ use crate::value_map::{ConfigValue, ValueMap};
 /// For formats supported by [serde](https://serde.rs), use [`serde_loader`]
 /// instead of implementing this trait manually.
 pub trait FileLoader: Send + Sync {
-    /// Parse the raw file contents into a [`ValueMap`].
+    /// Parse the raw file contents into configuration values.
     fn load(&self, contents: &str) -> Result<ValueMap, ConfigulatorError>;
 }
 

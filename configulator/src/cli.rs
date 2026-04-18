@@ -34,7 +34,7 @@ pub fn load_from_cli(
 
     let matches = cmd
         .try_get_matches_from(args)
-        .map_err(|e| ConfigulatorError::LoadError(e.to_string()))?;
+        .map_err(|e| ConfigulatorError::CLIError(e.to_string()))?;
 
     let mut map = extract_values(&matches, fields, "", &opts.separator);
 
