@@ -15,7 +15,7 @@ A simple configuration manager for Rust applications with derive macro support.
 - Any serde-compatible file format - YAML, TOML, JSON, with a one-liner
 - Pluggable file format support - bring your own parser via [`FileLoader`]
 - Nested struct support
-- [`Vec<T>`](Vec) list fields
+- `Vec<T>` list fields
 - Custom types - anything implementing [`FromStr`](std::str::FromStr) + [`Default`]
 - Optional validation via the [`Validate`] trait
 - Boolean CLI flags (`--debug` sets true, `--debug false` sets false)
