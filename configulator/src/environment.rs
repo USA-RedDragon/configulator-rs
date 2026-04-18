@@ -35,6 +35,8 @@ fn load_fields_from_env(
         match &field.field_type {
             FieldType::Struct(sub_fields) => {
                 let nested = load_fields_from_env(sub_fields, &env_key, separator);
+                // Empty nested maps are omitted; the struct will get T::default()
+                // via `parse_nested` when the key is absent from the map.
                 if !nested.is_empty() {
                     map.insert(field.config_name.to_string(), ConfigValue::Nested(nested));
                 }

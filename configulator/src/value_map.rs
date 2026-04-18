@@ -39,6 +39,9 @@ mod serde_impl {
             Ok(ConfigValue::Scalar(v))
         }
 
+        // null / unit values are mapped to empty strings, which downstream
+        // `parse_scalar` treats as `T::default()`. This means a YAML `null`
+        // behaves the same as an absent field.
         fn visit_none<E: de::Error>(self) -> Result<ConfigValue, E> {
             Ok(ConfigValue::Scalar(String::new()))
         }
@@ -52,7 +55,9 @@ mod serde_impl {
             while let Some(val) = seq.next_element::<ConfigValue>()? {
                 match val {
                     ConfigValue::Scalar(s) => items.push(s),
-                    other => items.push(format!("{other:?}")),
+                    _ => return Err(de::Error::custom(
+                        "nested values inside sequences are not supported; list items must be scalars",
+                    )),
                 }
             }
             Ok(ConfigValue::List(items))
@@ -136,18 +141,19 @@ pub enum ConfigValue {
 pub type ValueMap = HashMap<String, ConfigValue>;
 
 /// Merge `source` into `target`. Values in `source` overwrite values in `target`.
+/// For nested structs, merging is recursive (deep merge). For scalar/list values,
+/// or when `source` is nested but `target` is not, `source` wins outright.
 pub fn merge_value_maps(target: &mut ValueMap, source: &ValueMap) {
     for (key, value) in source {
         match value {
             ConfigValue::Nested(source_nested) => {
-                let entry = target
-                    .entry(key.clone())
-                    .or_insert_with(|| ConfigValue::Nested(ValueMap::new()));
-                if let ConfigValue::Nested(target_nested) = entry {
-                    merge_value_maps(target_nested, source_nested);
-                } else {
-                    // Source is nested but target isn't, source wins
-                    *entry = ConfigValue::Nested(source_nested.clone());
+                match target.get_mut(key) {
+                    Some(ConfigValue::Nested(target_nested)) => {
+                        merge_value_maps(target_nested, source_nested);
+                    }
+                    _ => {
+                        target.insert(key.clone(), ConfigValue::Nested(source_nested.clone()));
+                    }
                 }
             }
             _ => {

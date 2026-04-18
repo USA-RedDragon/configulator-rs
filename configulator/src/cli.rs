@@ -51,6 +51,18 @@ pub fn load_from_cli(
     Ok(map)
 }
 
+fn build_flag_name(prefix: &str, separator: &str, config_name: &str) -> String {
+    if prefix.is_empty() {
+        config_name.to_string()
+    } else {
+        format!("{prefix}{separator}{config_name}")
+    }
+}
+
+fn is_cli_provided(matches: &clap::ArgMatches, flag_name: &str) -> bool {
+    matches.value_source(flag_name) == Some(clap::parser::ValueSource::CommandLine)
+}
+
 fn register_args(
     mut cmd: clap::Command,
     fields: &[FieldInfo],
@@ -58,11 +70,7 @@ fn register_args(
     separator: &str,
 ) -> clap::Command {
     for field in fields {
-        let flag_name = if prefix.is_empty() {
-            field.config_name.to_string()
-        } else {
-            format!("{prefix}{separator}{}", field.config_name)
-        };
+        let flag_name = build_flag_name(prefix, separator, field.config_name);
 
         match &field.field_type {
             FieldType::Struct(sub_fields) => {
@@ -112,23 +120,19 @@ fn extract_values(
     let mut map = ValueMap::new();
 
     for field in fields {
-        let flag_name = if prefix.is_empty() {
-            field.config_name.to_string()
-        } else {
-            format!("{prefix}{separator}{}", field.config_name)
-        };
+        let flag_name = build_flag_name(prefix, separator, field.config_name);
 
         match &field.field_type {
             FieldType::Struct(sub_fields) => {
                 let nested = extract_values(matches, sub_fields, &flag_name, separator);
+                // Empty nested maps are omitted; the struct will get T::default()
+                // via `parse_nested` when the key is absent from the map.
                 if !nested.is_empty() {
                     map.insert(field.config_name.to_string(), ConfigValue::Nested(nested));
                 }
             }
             FieldType::Bool => {
-                if matches.contains_id(&flag_name) && matches.value_source(&flag_name)
-                    == Some(clap::parser::ValueSource::CommandLine)
-                {
+                if matches.contains_id(&flag_name) && is_cli_provided(matches, &flag_name) {
                     let val = matches
                         .get_one::<String>(&flag_name)
                         .map(|s| s.as_str())
@@ -138,9 +142,7 @@ fn extract_values(
             }
             FieldType::Scalar => {
                 if let Some(val) = matches.get_one::<String>(&flag_name) {
-                    if matches.value_source(&flag_name)
-                        == Some(clap::parser::ValueSource::CommandLine)
-                    {
+                    if is_cli_provided(matches, &flag_name) {
                         map.insert(
                             field.config_name.to_string(),
                             ConfigValue::Scalar(val.clone()),
@@ -150,9 +152,7 @@ fn extract_values(
             }
             FieldType::List => {
                 if let Some(vals) = matches.get_many::<String>(&flag_name) {
-                    if matches.value_source(&flag_name)
-                        == Some(clap::parser::ValueSource::CommandLine)
-                    {
+                    if is_cli_provided(matches, &flag_name) {
                         let items: Vec<String> = vals.cloned().collect();
                         if !items.is_empty() {
                             map.insert(field.config_name.to_string(), ConfigValue::List(items));

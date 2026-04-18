@@ -1382,11 +1382,9 @@ mod tests {
 
     #[cfg(feature = "file")]
     #[test]
-    fn test_serde_visitor_seq_with_nested_elements() {
-        // Exercises value_map.rs line 55: visit_seq with non-scalar elements
-        // (the `other => items.push(format!("{other:?}"))` branch)
-        // Also exercises the expecting() method path (lines 14-16) indirectly
-        // via seq elements that are maps
+    fn test_serde_visitor_seq_rejects_nested_elements() {
+        // Exercises value_map.rs visit_seq: non-scalar elements in a sequence
+        // must produce an error rather than silently degrading to debug strings.
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("config.yaml");
         let mut f = std::fs::File::create(&file_path).unwrap();
@@ -1394,18 +1392,19 @@ mod tests {
         writeln!(f, "  - simple").unwrap();
         writeln!(f, "  - key: value").unwrap(); // nested map inside a seq
 
-        let config = Configulator::<ListConfig>::new()
+        let result = Configulator::<ListConfig>::new()
             .with_file(FileOptions {
                 paths: vec![file_path.to_path_buf()],
                 error_if_not_found: true,
                 loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
             })
-            .load()
-            .unwrap();
+            .load();
 
-        assert_eq!(config.tags.len(), 2);
-        assert_eq!(config.tags[0], "simple");
-        // Second element is a nested map, formatted via Debug
-        assert!(config.tags[1].contains("key"), "expected nested map debug: {}", config.tags[1]);
+        assert!(result.is_err(), "expected error for nested value in sequence");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nested values inside sequences are not supported"),
+            "unexpected error message: {err}"
+        );
     }
 }

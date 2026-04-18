@@ -143,7 +143,7 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
             None
         };
         #[cfg(not(feature = "cli"))]
-        let cli_values: Option<ValueMap> = None;
+        let cli_values = None::<ValueMap>;
 
         // 3. File
         #[cfg(feature = "file")]
@@ -188,16 +188,12 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         C::from_value_map(&defaults)
     }
 
-    #[cfg(all(feature = "cli", feature = "testing"))]
+    #[cfg(feature = "cli")]
     fn get_cli_args(&self) -> Vec<String> {
-        match &self.cli_args {
-            Some(args) => args.clone(),
-            None => std::env::args().skip(1).collect(),
+        #[cfg(feature = "testing")]
+        if let Some(args) = &self.cli_args {
+            return args.clone();
         }
-    }
-
-    #[cfg(all(feature = "cli", not(feature = "testing")))]
-    fn get_cli_args(&self) -> Vec<String> {
         std::env::args().skip(1).collect()
     }
 }

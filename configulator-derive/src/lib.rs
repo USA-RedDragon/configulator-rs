@@ -120,6 +120,7 @@ fn extract_named_fields(
     }
 }
 
+#[derive(Debug)]
 struct FieldConfigAttrs {
     config_name: Option<String>,
     default_val: Option<String>,
@@ -152,6 +153,9 @@ fn parse_configulator_attrs(attrs: &[syn::Attribute]) -> Result<FieldConfigAttrs
                 let value = meta.value()?;
                 let lit: syn::LitStr = value.parse()?;
                 result.description = Some(lit.value());
+            } else {
+                return Err(meta.error("unknown configulator attribute; \
+                    expected `name`, `default`, or `description`"));
             }
             Ok(())
         })?;
@@ -165,17 +169,17 @@ fn parse_configulator_attrs(attrs: &[syn::Attribute]) -> Result<FieldConfigAttrs
 fn field_type_to_tokens(ty: &Type) -> proc_macro2::TokenStream {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            let ident_str = segment.ident.to_string();
-
-            return match ident_str.as_str() {
-                "bool" => quote! { configulator::FieldType::Bool },
-                "Vec" => quote! { configulator::FieldType::List },
-                _ => quote! {
-                    {
-                        let __m = configulator::ConfigDetect::<#ty>(::std::marker::PhantomData);
-                        __m.__configulator_field_type()
-                    }
-                },
+            if segment.ident == "bool" {
+                return quote! { configulator::FieldType::Bool };
+            }
+            if segment.ident == "Vec" {
+                return quote! { configulator::FieldType::List };
+            }
+            return quote! {
+                {
+                    let __m = configulator::ConfigDetect::<#ty>(::std::marker::PhantomData);
+                    __m.__configulator_field_type()
+                }
             };
         }
     }
@@ -226,12 +230,10 @@ enum TypeKind {
 fn classify_type(ty: &Type) -> TypeKind {
     if let Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
-            let ident_str = segment.ident.to_string();
-
-            if ident_str == "bool" {
+            if segment.ident == "bool" {
                 return TypeKind::Bool;
             }
-            if ident_str == "Vec" {
+            if segment.ident == "Vec" {
                 if let PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(GenericArgument::Type(inner)) = args.args.first() {
                         return TypeKind::Vec(Box::new(inner.clone()));
@@ -346,14 +348,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_attrs_ignores_unknown_key() {
+    fn parse_attrs_rejects_unknown_key() {
         let input: DeriveInput = parse_str(
             r#"struct Foo { #[configulator(name = "bar", extra)] f: String }"#,
         )
         .unwrap();
         let fields = extract_named_fields(&input).unwrap();
-        let attrs = parse_configulator_attrs(&fields.first().unwrap().attrs).unwrap();
-        assert_eq!(attrs.config_name.as_deref(), Some("bar"));
+        let err = parse_configulator_attrs(&fields.first().unwrap().attrs).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown configulator attribute"),
+            "expected 'unknown configulator attribute' error, got: {err}"
+        );
     }
 
     #[test]
