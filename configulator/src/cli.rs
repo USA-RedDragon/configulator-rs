@@ -13,10 +13,11 @@ pub fn load_from_cli(
     fields: &[FieldInfo],
     args: &[String],
     config_file_flag: bool,
+    base_cmd: Option<clap::Command>,
 ) -> Result<ValueMap, ConfigulatorError> {
-    let mut cmd = clap::Command::new("app")
+    let mut cmd = base_cmd
+        .unwrap_or_else(|| clap::Command::new("app"))
         .no_binary_name(true)
-        .disable_help_flag(true)
         .disable_version_flag(true);
 
     if config_file_flag {

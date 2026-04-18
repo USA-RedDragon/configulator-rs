@@ -18,6 +18,7 @@ pub struct Configulator<C> {
     env_opts: Option<EnvironmentVariableOptions>,
     cli_opts: Option<CLIFlagOptions>,
     cli_args: Option<Vec<String>>,
+    cli_command: Option<clap::Command>,
     _marker: PhantomData<C>,
 }
 
@@ -30,6 +31,7 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
             env_opts: None,
             cli_opts: None,
             cli_args: None,
+            cli_command: None,
             _marker: PhantomData,
         }
     }
@@ -62,6 +64,17 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         self
     }
 
+    /// Provide a custom `clap::Command` as the base for CLI flag parsing.
+    ///
+    /// Configulator will add its own config arguments to this command,
+    /// allowing you to define additional flags, set the app name/version,
+    /// or customise help output.
+    #[must_use]
+    pub fn with_cli_command(mut self, cmd: clap::Command) -> Self {
+        self.cli_command = Some(cmd);
+        self
+    }
+
     /// Load configuration, applying validation.
     pub fn load(self) -> Result<C, ConfigulatorError>
     where
@@ -87,7 +100,7 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         let cli_values = if let Some(ref opts) = self.cli_opts {
             let args = self.get_cli_args();
             let has_file = self.file_opts.is_some();
-            Some(cli::load_from_cli(opts, &fields, &args, has_file)?)
+            Some(cli::load_from_cli(opts, &fields, &args, has_file, self.cli_command.clone())?)
         } else {
             None
         };

@@ -162,6 +162,15 @@ Nested fields use the separator to form flag names (e.g. `--database.host`).
 
 Boolean fields work as flags (`--debug` sets to true, `--debug false` sets to false). List fields can be repeated (`--ports 80 --ports 443`).
 
+You can also provide a custom `clap::Command` to set the app name, version, or add your own flags:
+
+```rust
+.with_cli_command(clap::Command::new("myapp").version("1.0"))
+.with_cli_flags(CLIFlagOptions {
+    separator: ".".into(),
+})
+```
+
 ### Validation
 
 Implement the `Validate` trait and call `.load()` to validate after loading. Use `.load_without_validation()` to skip validation.
