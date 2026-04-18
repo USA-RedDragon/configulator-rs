@@ -1,5 +1,5 @@
 use crate::field_info::{FieldInfo, FieldType};
-use crate::value_map::{ConfigValue, ValueMap};
+use crate::value_map::{parse_comma_list, ConfigValue, ValueMap};
 
 /// Build a `ValueMap` from the `default` attributes on config fields.
 pub fn load_defaults(fields: &[FieldInfo]) -> ValueMap {
@@ -17,11 +17,7 @@ pub fn load_defaults(fields: &[FieldInfo]) -> ValueMap {
             }
             FieldType::List => {
                 if let Some(default_str) = field.default_value {
-                    let parts: Vec<String> = default_str
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    map.insert(key, ConfigValue::List(parts));
+                    map.insert(key, ConfigValue::List(parse_comma_list(default_str)));
                 }
             }
             FieldType::Bool | FieldType::Scalar => {

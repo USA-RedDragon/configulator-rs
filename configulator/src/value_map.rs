@@ -1,5 +1,10 @@
 use std::collections::HashMap;
 
+/// Split a comma-separated string into trimmed items.
+pub(crate) fn parse_comma_list(s: &str) -> Vec<String> {
+    s.split(',').map(|item| item.trim().to_string()).collect()
+}
+
 #[cfg(feature = "file")]
 mod serde_impl {
     use super::ConfigValue;

@@ -1,6 +1,6 @@
 use crate::field_info::{FieldInfo, FieldType};
 use crate::options::EnvironmentVariableOptions;
-use crate::value_map::{ConfigValue, ValueMap};
+use crate::value_map::{parse_comma_list, ConfigValue, ValueMap};
 
 /// Load configuration values from environment variables.
 ///
@@ -43,8 +43,7 @@ fn load_fields_from_env(
             }
             FieldType::List => {
                 if let Ok(val) = std::env::var(&env_key) {
-                    let parts: Vec<String> = val.split(',').map(|s| s.trim().to_string()).collect();
-                    map.insert(field.config_name.to_string(), ConfigValue::List(parts));
+                    map.insert(field.config_name.to_string(), ConfigValue::List(parse_comma_list(&val)));
                 }
             }
             FieldType::Bool | FieldType::Scalar => {
