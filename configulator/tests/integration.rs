@@ -799,7 +799,7 @@ mod tests {
             .load()
             .unwrap();
 
-        assert!((config.ratio - 3.14).abs() < f64::EPSILON);
+        assert!((config.ratio - std::f64::consts::PI).abs() < f64::EPSILON);
     }
 
     #[cfg(feature = "file")]
