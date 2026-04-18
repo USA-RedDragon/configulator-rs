@@ -788,7 +788,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("config.yaml");
         let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "ratio: 3.14").unwrap();
+        writeln!(f, "ratio: 1.5").unwrap();
 
         let config = Configulator::<FloatConfig>::new()
             .with_file(FileOptions {
@@ -799,7 +799,7 @@ mod tests {
             .load()
             .unwrap();
 
-        assert!((config.ratio - std::f64::consts::PI).abs() < f64::EPSILON);
+        assert!((config.ratio - 1.5).abs() < f64::EPSILON);
     }
 
     #[cfg(feature = "file")]
