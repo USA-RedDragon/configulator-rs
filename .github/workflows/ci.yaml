@@ -91,57 +91,10 @@ jobs:
           done
           echo "All tests passed"
 
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # --- Linux Targets ---
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: riscv64gc-unknown-linux-gnu
-            os: ubuntu-24.04
-
-          # --- Windows Targets ---
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-
-          # --- macOS Targets ---
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Build
-        run: |
-          rustup target add ${{ matrix.target }}
-          cargo build --target ${{ matrix.target }} --release
-
-  build-results:
-    if: always()
-    needs: [ build ]
-    runs-on: ubuntu-24.04
-    steps:
-      - run: |
-          result="${{ needs.build.result }}"
-          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
-            echo "All builds succeeded"
-          else
-            echo "One or more builds failed" >&2
-            exit 1
-          fi
-
   publish:
     name: Publish to crates.io
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [docs, test-results, build-results]
+    needs: [docs, test-results]
     runs-on: ubuntu-24.04
     environment: crates-io
     permissions:
