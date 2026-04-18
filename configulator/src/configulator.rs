@@ -100,6 +100,9 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
     /// Configulator will add its own config arguments to this command,
     /// allowing you to define additional flags, set the app name/version,
     /// or customise help output.
+    ///
+    /// Custom args must not share IDs with config field names — clap will
+    /// error at parse time if an arg ID is registered twice.
     #[cfg(feature = "cli")]
     #[must_use]
     pub fn with_cli_command(mut self, cmd: clap::Command) -> Self {
