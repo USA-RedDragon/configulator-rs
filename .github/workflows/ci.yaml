@@ -150,16 +150,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Generate OIDC token for crates.io
+      - name: Generate crates.io publish token
         run: |
-          CRATES_IO_TOKEN=$(curl -sS -f -X POST \
+          OIDC_TOKEN=$(curl -sS -f -X POST \
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=crates.io" \
             | jq -r '.value')
+          CRATES_IO_TOKEN=$(curl -sS -f -X POST \
+            https://crates.io/api/v1/trusted_publishing/tokens \
+            -H "Content-Type: application/json" \
+            -d "{\"jwt\": \"$OIDC_TOKEN\"}" \
+            | jq -r '.token')
           echo "::add-mask::$CRATES_IO_TOKEN"
           echo "CRATES_IO_TOKEN=$CRATES_IO_TOKEN" >> "$GITHUB_ENV"
       - name: Publish configulator-derive
-        run: cargo publish -p configulator-derive --registry crates-io
+        run: cargo publish -p configulator-derive
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.CRATES_IO_TOKEN }}
       - name: Attest configulator-derive
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
@@ -168,7 +175,9 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
       - name: Publish configulator-rs
-        run: cargo publish -p configulator-rs --registry crates-io
+        run: cargo publish -p configulator-rs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.CRATES_IO_TOKEN }}
       - name: Attest configulator-rs
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
