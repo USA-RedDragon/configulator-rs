@@ -25,13 +25,17 @@ use syn::{
 #[proc_macro_derive(Config, attributes(configulator))]
 pub fn derive_config(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    match derive_config_impl(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn derive_config_impl(input: &DeriveInput) -> Result<proc_macro2::TokenStream, syn::Error> {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let fields = match extract_named_fields(&input) {
-        Ok(f) => f,
-        Err(err) => return err.to_compile_error().into(),
-    };
+    let fields = extract_named_fields(input)?;
 
     let mut field_info_tokens = Vec::new();
     let mut from_map_tokens = Vec::new();
@@ -41,10 +45,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
         let field_name_str = field_ident.to_string();
         let field_ty = &field.ty;
 
-        let attrs = match parse_configulator_attrs(&field.attrs) {
-            Ok(a) => a,
-            Err(err) => return err.to_compile_error().into(),
-        };
+        let attrs = parse_configulator_attrs(&field.attrs)?;
 
         let config_name_str = attrs.config_name.unwrap_or_else(|| field_name_str.clone());
         let field_type_token = field_type_to_tokens(field_ty);
@@ -96,7 +97,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    Ok(expanded)
 }
 
 /// Extract named fields from a `DeriveInput`, returning an error for non-structs
@@ -248,6 +249,37 @@ fn classify_type(ty: &Type) -> TypeKind {
 mod tests {
     use super::*;
     use syn::parse_str;
+
+    // ── derive_config_impl tests ──
+
+    #[test]
+    fn derive_config_impl_valid_struct() {
+        let input: DeriveInput = parse_str("struct Foo { x: u32 }").unwrap();
+        assert!(derive_config_impl(&input).is_ok());
+    }
+
+    #[test]
+    fn derive_config_impl_rejects_enum() {
+        let input: DeriveInput = parse_str("enum Foo { A, B }").unwrap();
+        let err = derive_config_impl(&input).unwrap_err();
+        assert!(err.to_string().contains("only be derived for structs"));
+    }
+
+    #[test]
+    fn derive_config_impl_rejects_tuple_struct() {
+        let input: DeriveInput = parse_str("struct Foo(u32);").unwrap();
+        let err = derive_config_impl(&input).unwrap_err();
+        assert!(err.to_string().contains("named fields"));
+    }
+
+    #[test]
+    fn derive_config_impl_rejects_bad_attr() {
+        let input: DeriveInput = parse_str(
+            r#"struct Foo { #[configulator(name = 42)] f: String }"#,
+        )
+        .unwrap();
+        assert!(derive_config_impl(&input).is_err());
+    }
 
     // ── extract_named_fields tests ──
 
