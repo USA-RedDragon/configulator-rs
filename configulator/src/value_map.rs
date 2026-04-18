@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
-/// Split a comma-separated string into trimmed items.
+/// Split a comma-separated string into trimmed, non-empty items.
 pub(crate) fn parse_comma_list(s: &str) -> Vec<String> {
-    s.split(',').map(|item| item.trim().to_string()).collect()
+    s.split(',')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
 }
 
 #[cfg(feature = "file")]
