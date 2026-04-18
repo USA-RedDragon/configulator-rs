@@ -72,6 +72,50 @@ mod serde_impl {
             deserializer.deserialize_any(ConfigValueVisitor)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_expecting() {
+            use std::fmt::Write;
+            let mut buf = String::new();
+            let visitor = ConfigValueVisitor;
+            // Call expecting via a Formatter
+            write!(buf, "{}", DisplayExpecting(visitor)).unwrap();
+            assert_eq!(buf, "any valid configuration value");
+        }
+
+        /// Helper that calls the visitor's `expecting` method through Display.
+        struct DisplayExpecting<V>(V);
+        impl<V: Visitor<'static>> fmt::Display for DisplayExpecting<V> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.expecting(f)
+            }
+        }
+
+        #[test]
+        fn test_visit_string() {
+            let visitor = ConfigValueVisitor;
+            let result: Result<ConfigValue, serde::de::value::Error> =
+                visitor.visit_string("owned".to_owned());
+            match result.unwrap() {
+                ConfigValue::Scalar(s) => assert_eq!(s, "owned"),
+                other => panic!("expected Scalar, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_visit_none() {
+            let visitor = ConfigValueVisitor;
+            let result: Result<ConfigValue, serde::de::value::Error> = visitor.visit_none();
+            match result.unwrap() {
+                ConfigValue::Scalar(s) => assert!(s.is_empty()),
+                other => panic!("expected empty Scalar, got {other:?}"),
+            }
+        }
+    }
 }
 
 /// Intermediate representation of configuration values from any source.
