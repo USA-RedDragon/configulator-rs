@@ -7,16 +7,17 @@ license = "MIT"
 description = "A configuration loader that populates a struct from YAML files, environment variables, and CLI flags"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
 categories = ["config"]
+keywords = ["config", "configuration", "cli", "environment", "yaml"]
 readme = "../README.md"
+exclude = [".github/", "target/"]
 
 [lib]
 name = "configulator"
 
 [dependencies]
 configulator-derive = { version = "0.1.0", path = "../configulator-derive" }
-serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 clap = { version = "4", features = ["string"] }
 
 [dev-dependencies]
-tempfile = "=3.27.0"
+tempfile = "3"

@@ -7,6 +7,9 @@ license = "MIT"
 description = "Derive macro for configulator"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
 categories = ["config"]
+keywords = ["config", "configuration", "derive", "macro"]
+readme = "README.md"
+exclude = [".github/", "target/"]
 
 [lib]
 proc-macro = true

@@ -36,7 +36,7 @@
 //!
 //! fn main() {
 //!     let config: AppConfig = Configulator::new()
-//!         .build()
+//!         .load_without_validation()
 //!         .expect("failed to load config");
 //!     println!("{config:?}");
 //! }

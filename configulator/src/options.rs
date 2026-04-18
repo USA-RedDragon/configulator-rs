@@ -12,9 +12,9 @@ pub struct FileOptions {
 /// Options for loading configuration from environment variables.
 #[derive(Debug, Clone)]
 pub struct EnvironmentVariableOptions {
-    /// Prefix for env vars (e.g. `"APP"` → `APP_PORT`).
+    /// Prefix for env vars (e.g. `"APP"` with separator `"__"` → `APP__PORT`).
     pub prefix: String,
-    /// Separator for nested struct fields (e.g. `"__"` → `APP_DATABASE__HOST`).
+    /// Separator between prefix and field names (e.g. `"__"` → `APP__DATABASE__HOST`).
     pub separator: String,
 }
 

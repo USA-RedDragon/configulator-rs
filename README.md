@@ -30,7 +30,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-configulator-rs = { git = "https://github.com/USA-RedDragon/configulator-rs" }
+configulator-rs = "0.1"
 ```
 
 > [!NOTE]
