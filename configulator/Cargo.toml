@@ -1,6 +1,6 @@
 [package]
 name = "configulator-rs"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.70"
 license = "MIT"
@@ -22,7 +22,7 @@ env = []
 testing = ["cli"]
 
 [dependencies]
-configulator-derive = { version = "0.0.1", path = "../configulator-derive" }
+configulator-derive = { version = "0.1.0", path = "../configulator-derive" }
 clap = { version = "4", features = ["string"], optional = true }
 serde = { version = "1", optional = true }
 
