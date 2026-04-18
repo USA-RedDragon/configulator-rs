@@ -627,4 +627,533 @@ mod tests {
         assert_eq!(config.port, 0); // Default::default() for u16
         assert!(!config.debug);    // Default::default() for bool
     }
+
+    // ---- Phase 1: error.rs Display/Error + options.rs Debug ----
+
+    #[test]
+    fn test_error_display_parse_error() {
+        let err = ConfigulatorError::ParseError {
+            field: "port".into(),
+            value: "abc".into(),
+            message: "invalid digit".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("port"));
+        assert!(msg.contains("abc"));
+        assert!(msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_error_display_validation_error() {
+        let inner: Box<dyn std::error::Error + Send + Sync> = "bad config".into();
+        let err = ConfigulatorError::ValidationError(inner);
+        assert!(err.to_string().contains("validation error"));
+        assert!(err.to_string().contains("bad config"));
+    }
+
+    #[test]
+    fn test_error_source_validation() {
+        use std::error::Error;
+        let inner: Box<dyn std::error::Error + Send + Sync> = "inner error".into();
+        let err = ConfigulatorError::ValidationError(inner);
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_error_source_parse_error_is_none() {
+        use std::error::Error;
+        let err = ConfigulatorError::ParseError {
+            field: "f".into(),
+            value: "v".into(),
+            message: "m".into(),
+        };
+        assert!(err.source().is_none());
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_error_display_file_not_found() {
+        let err = ConfigulatorError::FileNotFound;
+        assert_eq!(err.to_string(), "config file not found");
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_error_display_file_error() {
+        let err = ConfigulatorError::FileError("bad yaml".into());
+        assert!(err.to_string().contains("file error"));
+        assert!(err.to_string().contains("bad yaml"));
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_error_source_file_variants_are_none() {
+        use std::error::Error;
+        let err1 = ConfigulatorError::FileNotFound;
+        assert!(err1.source().is_none());
+        let err2 = ConfigulatorError::FileError("x".into());
+        assert!(err2.source().is_none());
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_error_display_cli_error() {
+        let err = ConfigulatorError::CLIError("unknown flag".into());
+        assert!(err.to_string().contains("CLI error"));
+        assert!(err.to_string().contains("unknown flag"));
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_error_source_cli_error_is_none() {
+        use std::error::Error;
+        let err = ConfigulatorError::CLIError("x".into());
+        assert!(err.source().is_none());
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_file_options_debug() {
+        let opts = FileOptions {
+            paths: vec![PathBuf::from("config.yaml")],
+            error_if_not_found: true,
+            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+        };
+        let debug_str = format!("{:?}", opts);
+        assert!(debug_str.contains("FileOptions"));
+        assert!(debug_str.contains("config.yaml"));
+        assert!(debug_str.contains("error_if_not_found"));
+        assert!(debug_str.contains("<dyn FileLoader>"));
+    }
+
+    // ---- Phase 2: value_map.rs serde visitors + merge ----
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_bool() {
+        // Exercises visit_bool (value_map.rs lines 14-16)
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "debug: true").unwrap();
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert!(config.debug);
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_integer() {
+        // Exercises visit_i64/visit_u64 (value_map.rs lines 22-24, 30-32)
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "port: 9999").unwrap();
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.port, 9999);
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_float() {
+        // Exercises visit_f64 (value_map.rs lines 38-40)
+        #[derive(Config, Default, Debug, PartialEq)]
+        struct FloatConfig {
+            #[configulator(name = "ratio", default = "1.0")]
+            ratio: f64,
+        }
+        impl Validate for FloatConfig {
+            fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "ratio: 3.14").unwrap();
+
+        let config = Configulator::<FloatConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert!((config.ratio - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_null() {
+        // Exercises visit_none/visit_unit (value_map.rs lines 42-44, 46-48)
+        // YAML null should produce an empty scalar, field falls back to default
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "host: ~").unwrap(); // YAML null
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        // Null → empty scalar → String::default() = ""
+        assert_eq!(config.host, "");
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_seq_and_map() {
+        // Exercises visit_seq (line 55) and visit_map (value_map.rs lines 105-107 via nested)
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "tags:").unwrap();
+        writeln!(f, "  - one").unwrap();
+        writeln!(f, "  - two").unwrap();
+        writeln!(f, "ports:").unwrap();
+        writeln!(f, "  - 8080").unwrap();
+
+        let config = Configulator::<ListConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.tags, vec!["one", "two"]);
+        assert_eq!(config.ports, vec![8080]);
+    }
+
+    #[test]
+    fn test_merge_value_maps_nested_overwrites_scalar() {
+        // Exercises merge_value_maps type-mismatch branch (value_map.rs lines 105-107)
+        // When target has Scalar("x") and source has Nested({...}) for the same key,
+        // source should win.
+        let mut target = ValueMap::new();
+        target.insert("db".into(), ConfigValue::Scalar("old".into()));
+
+        let mut inner = ValueMap::new();
+        inner.insert("host".into(), ConfigValue::Scalar("localhost".into()));
+
+        let mut source = ValueMap::new();
+        source.insert("db".into(), ConfigValue::Nested(inner));
+
+        merge_value_maps(&mut target, &source);
+
+        match target.get("db") {
+            Some(ConfigValue::Nested(nested)) => {
+                match nested.get("host") {
+                    Some(ConfigValue::Scalar(s)) => assert_eq!(s, "localhost"),
+                    other => panic!("Expected Scalar(localhost), got {other:?}"),
+                }
+            }
+            other => panic!("Expected Nested, got {other:?}"),
+        }
+    }
+
+    // ---- Phase 3: file.rs edge cases ----
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_loader_non_nested_root_error() {
+        // Exercises SerdeLoader returning non-Nested at root (file.rs lines 33-35)
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "just a string").unwrap();
+
+        let result = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("root must be a mapping/table"));
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_file_io_error_non_not_found() {
+        // Exercises the non-NotFound I/O error branch (file.rs lines 76-80)
+        // Reading a directory triggers an I/O error that isn't NotFound
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_path_buf();
+
+        let result = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![dir_path.clone()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("file error"), "unexpected error: {msg}");
+    }
+
+    // ---- Phase 4: environment.rs empty prefix ----
+
+    #[cfg(feature = "env")]
+    #[test]
+    fn test_env_empty_prefix() {
+        // Exercises the empty prefix branch (environment.rs line 46)
+        // With prefix="" and separator="_", env key should be just the field name
+        // SAFETY: No other test uses these exact bare env var names concurrently.
+        unsafe {
+            set_env("HOST", "emptyprefix");
+            set_env("PORT", "1234");
+        }
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_environment_variables(EnvironmentVariableOptions {
+                prefix: "".into(),
+                separator: "_".into(),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.host, "emptyprefix");
+        assert_eq!(config.port, 1234);
+
+        unsafe {
+            remove_env("HOST");
+            remove_env("PORT");
+        }
+    }
+
+    // ---- Phase 5: derive_helpers parse edge cases ----
+
+    #[test]
+    fn test_parse_scalar_with_list_value() {
+        // Exercises parse_scalar wrong type branch (derive_helpers.rs line 30)
+        let mut map = ValueMap::new();
+        map.insert("port".into(), ConfigValue::List(vec!["1".into(), "2".into()]));
+
+        let result = parse_scalar::<u16>(&map, "port");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expected scalar value"));
+    }
+
+    #[test]
+    fn test_parse_list_with_nested_value() {
+        // Exercises parse_list wrong type branch (derive_helpers.rs lines 81-85)
+        let mut map = ValueMap::new();
+        let mut nested = ValueMap::new();
+        nested.insert("x".into(), ConfigValue::Scalar("1".into()));
+        map.insert("tags".into(), ConfigValue::Nested(nested));
+
+        let result = parse_list::<String>(&map, "tags");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expected list value"));
+    }
+
+    #[test]
+    fn test_parse_list_single_scalar_as_one_element() {
+        // Exercises single scalar → one-element list (derive_helpers.rs lines 69-78)
+        let mut map = ValueMap::new();
+        map.insert("ports".into(), ConfigValue::Scalar("8080".into()));
+
+        let result = parse_list::<u16>(&map, "ports").unwrap();
+        assert_eq!(result, vec![8080]);
+    }
+
+    #[test]
+    fn test_parse_list_empty_scalar_returns_empty() {
+        // Exercises empty scalar → empty vec (derive_helpers.rs line 69)
+        let mut map = ValueMap::new();
+        map.insert("ports".into(), ConfigValue::Scalar("".into()));
+
+        let result = parse_list::<u16>(&map, "ports").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_list_item_parse_error() {
+        // Exercises parse error within list items (derive_helpers.rs lines 60-63)
+        let mut map = ValueMap::new();
+        map.insert("ports".into(), ConfigValue::List(vec!["80".into(), "not_a_port".into()]));
+
+        let result = parse_list::<u16>(&map, "ports");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ports[1]"), "Error should mention index: {err}");
+        assert!(err.contains("not_a_port"));
+    }
+
+    #[test]
+    fn test_parse_nested_with_scalar_value() {
+        // Exercises parse_nested wrong type (derive_helpers.rs lines 96-101)
+        let mut map = ValueMap::new();
+        map.insert("database".into(), ConfigValue::Scalar("not_a_struct".into()));
+
+        let result = DatabaseConfig::from_value_map(&ValueMap::new());
+        assert!(result.is_ok()); // baseline
+
+        let result = parse_nested::<DatabaseConfig>(&map, "database");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expected nested struct value"));
+    }
+
+    #[test]
+    fn test_parse_scalar_empty_returns_default() {
+        // Exercises empty scalar → T::default() (derive_helpers.rs line 39-43)
+        let mut map = ValueMap::new();
+        map.insert("port".into(), ConfigValue::Scalar("".into()));
+
+        let result = parse_scalar::<u16>(&map, "port").unwrap();
+        assert_eq!(result, 0); // u16::default()
+    }
+
+    // ---- Phase 6: cli.rs edge cases ----
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_bool_explicit_true() {
+        // Exercises bool flag with explicit "true" value (cli.rs lines 92-99)
+        let config = Configulator::<SimpleConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--debug".into(), "true".into()])
+            .load()
+            .unwrap();
+
+        assert!(config.debug);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_bool_explicit_false() {
+        // Exercises bool flag with explicit "false" value (cli.rs lines 92-99)
+        let config = Configulator::<SimpleConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--debug".into(), "false".into()])
+            .load()
+            .unwrap();
+
+        assert!(!config.debug);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_list_flags_repeated() {
+        // Exercises list extraction with get_many (cli.rs lines 152-154, 156-161)
+        let config = Configulator::<ListConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec![
+                "--tags".into(), "x".into(),
+                "--tags".into(), "y".into(),
+                "--ports".into(), "80".into(),
+                "--ports".into(), "443".into(),
+            ])
+            .load()
+            .unwrap();
+
+        assert_eq!(config.tags, vec!["x", "y"]);
+        assert_eq!(config.ports, vec![80, 443]);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_unknown_flag_error() {
+        // Exercises CLIError from clap parse failure (cli.rs line 18)
+        let result = Configulator::<SimpleConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--nonexistent-flag".into(), "val".into()])
+            .load();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("CLI error"), "unexpected error: {}", err);
+    }
+
+    // ---- Phase 7: configulator.rs builder edge cases ----
+
+    #[test]
+    fn test_configulator_default_trait() {
+        // Exercises Configulator::default() (configulator.rs lines 206-208)
+        let config = Configulator::<SimpleConfig>::default()
+            .load()
+            .unwrap();
+
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert!(!config.debug);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_without_file_opts() {
+        // Exercises has_file=false path (configulator.rs lines 105-108)
+        // CLI configured without .with_file()
+        let config = Configulator::<SimpleConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--host".into(), "clionly".into()])
+            .load()
+            .unwrap();
+
+        assert_eq!(config.host, "clionly");
+        assert_eq!(config.port, 8080); // from default
+    }
+
+    #[cfg(all(feature = "file", feature = "cli"))]
+    #[test]
+    fn test_config_file_key_does_not_leak() {
+        // Exercises __config_file__ removal (configulator.rs line 195)
+        // After loading with --config, the internal key should not appear
+        // in the final config struct fields
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "host: from-config-file").unwrap();
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![],
+                error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec![
+                "--config".into(),
+                file_path.to_string_lossy().to_string(),
+            ])
+            .load()
+            .unwrap();
+
+        // The config loaded correctly and __config_file__ didn't cause issues
+        assert_eq!(config.host, "from-config-file");
+        assert_eq!(config.port, 8080); // default
+    }
 }

@@ -304,7 +304,7 @@ pub use crate::derive_helpers::{
 #[doc(hidden)]
 pub use crate::field_info::{FieldInfo, FieldType};
 #[doc(hidden)]
-pub use crate::value_map::{ConfigValue, ValueMap};
+pub use crate::value_map::{merge_value_maps, ConfigValue, ValueMap};
 
 /// Trait implemented by the `Config` derive macro. Provides field metadata.
 #[doc(hidden)]
