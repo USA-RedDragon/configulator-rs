@@ -6,6 +6,7 @@ rust-version = "1.70"
 license = "MIT"
 description = "A configuration loader that populates a struct from config files, environment variables, and CLI flags"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
+documentation = "https://docs.rs/configulator-rs"
 categories = ["config"]
 keywords = ["config", "configuration", "cli", "environment", "file"]
 readme = "../README.md"
