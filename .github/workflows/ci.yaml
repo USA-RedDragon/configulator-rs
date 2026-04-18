@@ -150,16 +150,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Generate crates.io publish token
+      - name: Get token info
+        uses: actions/github-script@v6
+        id: oidc
+        with:
+          script: |
+            const token = process.env['ACTIONS_RUNTIME_TOKEN']
+            const runtimeUrl = process.env['ACTIONS_ID_TOKEN_REQUEST_URL']
+            core.setOutput('token', token.trim())
+            core.setOutput('token-url', runtimeUrl.trim())
+      - name: Get OIDC token
+        id: github-token
         run: |
-          OIDC_TOKEN=$(curl -sS -f \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=crates.io" \
-            | jq -r '.value')
+          IDTOKEN=$(curl -fSsL \
+            -H "Authorization: bearer ${{ steps.oidc.outputs.token }}" \
+            -H "Accept: application/json; api-version=2.0" \
+            -H "Content-Type: application/json" \
+            "${{ steps.oidc.outputs.token-url }}&audience=crates.io" \
+            -d "{}" | jq -r '.value')
+          echo "::add-mask::$IDTOKEN"
+          echo "IDTOKEN=$IDTOKEN" >> "$GITHUB_ENV"
+      - name: Exchange for crates.io publish token
+        run: |
           CRATES_IO_TOKEN=$(curl -sS -f -X POST \
             https://crates.io/api/v1/trusted_publishing/tokens \
             -H "Content-Type: application/json" \
-            -d "{\"jwt\": \"$OIDC_TOKEN\"}" \
+            -d "{\"jwt\": \"$IDTOKEN\"}" \
             | jq -r '.token')
           echo "::add-mask::$CRATES_IO_TOKEN"
           echo "CRATES_IO_TOKEN=$CRATES_IO_TOKEN" >> "$GITHUB_ENV"
