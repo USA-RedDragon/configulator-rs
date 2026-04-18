@@ -102,42 +102,6 @@ pub fn parse_nested<T: FromValueMap + Default>(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Minimal struct implementing FromValueMap + Default for testing parse_nested.
-    #[derive(Default, Debug, PartialEq)]
-    struct TestNested {
-        name: String,
-    }
-
-    impl FromValueMap for TestNested {
-        fn from_value_map(map: &ValueMap) -> Result<Self, ConfigulatorError> {
-            let name = parse_scalar::<String>(map, "name")?;
-            Ok(TestNested { name })
-        }
-    }
-
-    impl ConfigFields for TestNested {
-        fn configulator_fields() -> Vec<crate::field_info::FieldInfo> {
-            vec![]
-        }
-    }
-
-    #[test]
-    fn test_parse_nested_happy_path() {
-        let mut inner = ValueMap::new();
-        inner.insert("name".into(), ConfigValue::Scalar("hello".into()));
-
-        let mut map = ValueMap::new();
-        map.insert("nested".into(), ConfigValue::Nested(inner));
-
-        let result = parse_nested::<TestNested>(&map, "nested").unwrap();
-        assert_eq!(result.name, "hello");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Compile-time struct vs scalar detection
 // ---------------------------------------------------------------------------
@@ -183,5 +147,41 @@ where
     }
     fn __configulator_field_type(&self) -> FieldType {
         FieldType::Scalar
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal struct implementing FromValueMap + Default for testing parse_nested.
+    #[derive(Default, Debug, PartialEq)]
+    struct TestNested {
+        name: String,
+    }
+
+    impl FromValueMap for TestNested {
+        fn from_value_map(map: &ValueMap) -> Result<Self, ConfigulatorError> {
+            let name = parse_scalar::<String>(map, "name")?;
+            Ok(TestNested { name })
+        }
+    }
+
+    impl ConfigFields for TestNested {
+        fn configulator_fields() -> Vec<crate::field_info::FieldInfo> {
+            vec![]
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_happy_path() {
+        let mut inner = ValueMap::new();
+        inner.insert("name".into(), ConfigValue::Scalar("hello".into()));
+
+        let mut map = ValueMap::new();
+        map.insert("nested".into(), ConfigValue::Nested(inner));
+
+        let result = parse_nested::<TestNested>(&map, "nested").unwrap();
+        assert_eq!(result.name, "hello");
     }
 }
