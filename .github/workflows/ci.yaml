@@ -163,7 +163,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ env.CRATES_IO_TOKEN }}
       - name: Attest configulator-derive
-        uses: actions/attest@v4.1.0
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: target/package/configulator-derive-*.crate
           predicate-type: https://slsa.dev/provenance/v1
@@ -174,7 +174,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ env.CRATES_IO_TOKEN }}
       - name: Attest configulator-rs
-        uses: actions/attest@v4.1.0
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: target/package/configulator-rs-*.crate
           predicate-type: https://slsa.dev/provenance/v1
