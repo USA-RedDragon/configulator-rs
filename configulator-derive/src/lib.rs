@@ -178,7 +178,12 @@ fn field_type_to_tokens(ty: &Type) -> proc_macro2::TokenStream {
                 return quote! { configulator::FieldType::Bool };
             }
             if segment.ident == "Vec" {
-                return quote! { configulator::FieldType::List };
+                if let PathArguments::AngleBracketed(_) = &segment.arguments {
+                    return quote! { configulator::FieldType::List };
+                }
+                return quote! {
+                    compile_error!("Vec fields must have a type argument, e.g. Vec<String>")
+                };
             }
         }
     }
@@ -245,7 +250,7 @@ fn classify_type(ty: &Type) -> TypeKind {
                         return TypeKind::Vec(Box::new(inner.clone()));
                     }
                 }
-                // Vec without type argument will produce a compile error downstream
+                // Vec without type argument — emit a clear error
                 return TypeKind::Other;
             }
         }
