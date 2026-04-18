@@ -175,14 +175,15 @@ fn field_type_to_tokens(ty: &Type) -> proc_macro2::TokenStream {
             if segment.ident == "Vec" {
                 return quote! { configulator::FieldType::List };
             }
-            return quote! {
-                {
-                    let __m = configulator::ConfigDetect::<#ty>(::std::marker::PhantomData);
-                    __m.__configulator_field_type()
-                }
-            };
         }
     }
+    gen_config_detect_tokens(ty)
+}
+
+/// Generate the `ConfigDetect` autoref dispatch expression for a type.
+/// At compile time this resolves to either `FieldType::Struct` (for nested
+/// config structs) or `FieldType::Scalar` (for `FromStr` types).
+fn gen_config_detect_tokens(ty: &Type) -> proc_macro2::TokenStream {
     quote! {
         {
             let __m = configulator::ConfigDetect::<#ty>(::std::marker::PhantomData);
