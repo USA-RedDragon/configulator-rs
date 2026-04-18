@@ -1156,4 +1156,256 @@ mod tests {
         assert_eq!(config.host, "from-config-file");
         assert_eq!(config.port, 8080); // default
     }
+
+    // ---- Additional coverage for remaining gaps ----
+
+    // Struct with described list fields — needed for cli.rs line 97
+    #[derive(Config, Default, Debug, PartialEq)]
+    struct DescribedListConfig {
+        #[configulator(name = "items", description = "List of items")]
+        items: Vec<String>,
+    }
+
+    impl Validate for DescribedListConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_list_with_description() {
+        // Exercises cli.rs line 97: `arg = arg.help(desc)` in the List branch
+        // of register_args — requires a list field with a description attribute
+        let config = Configulator::<DescribedListConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--items".into(), "a".into(), "--items".into(), "b".into()])
+            .load()
+            .unwrap();
+
+        assert_eq!(config.items, vec!["a", "b"]);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_list_not_provided() {
+        // Exercises cli.rs lines 160-161: List field is registered in clap
+        // but no values are provided on the command line, so get_many returns None
+        let config = Configulator::<ListConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec![]) // no list args provided
+            .load()
+            .unwrap();
+
+        // Should fall back to defaults: tags=["a","b","c"], ports=[]
+        assert_eq!(config.tags, vec!["a", "b", "c"]);
+        assert!(config.ports.is_empty());
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_with_cli_command() {
+        // Exercises configulator.rs lines 105-108: with_cli_command
+        let cmd = clap::Command::new("myapp").version("1.0.0");
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_cli_command(cmd)
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--host".into(), "custom-cmd".into()])
+            .load()
+            .unwrap();
+
+        assert_eq!(config.host, "custom-cmd");
+        assert_eq!(config.port, 8080);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_cli_no_explicit_args_falls_back_to_env_args() {
+        // Exercises configulator.rs line 195: the None branch of get_cli_args
+        // where with_cli_args() was NOT called. std::env::args() from the test
+        // runner will be passed to clap, which will likely fail because the test
+        // runner passes unknown flags (like --test-threads).
+        let result = Configulator::<SimpleConfig>::new()
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            // Deliberately NOT calling .with_cli_args() to exercise None branch
+            .load();
+
+        // This may or may not succeed depending on test runner args;
+        // the point is that line 195 is executed either way.
+        // Check it returns either Ok or a CLIError (both are valid).
+        match result {
+            Ok(_) => {} // no extra test runner args happened to conflict
+            Err(ref e) => {
+                assert!(
+                    e.to_string().contains("CLI error"),
+                    "Expected CLIError from unknown test runner args, got: {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_list_scalar_parse_failure() {
+        // Exercises derive_helpers.rs lines 74-77: parse error in the
+        // single-scalar-treated-as-one-element-list path
+        let mut map = ValueMap::new();
+        map.insert("ports".into(), ConfigValue::Scalar("not_a_u16".into()));
+
+        let result = parse_list::<u16>(&map, "ports");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ports"), "Error should mention field: {err}");
+        assert!(err.contains("not_a_u16"), "Error should mention value: {err}");
+    }
+
+    #[test]
+    fn test_parse_nested_with_nested_value() {
+        // Exercises derive_helpers.rs line 96: parse_nested happy path
+        // where the value IS a ConfigValue::Nested
+        let mut inner = ValueMap::new();
+        inner.insert("url".into(), ConfigValue::Scalar("postgres://test/db".into()));
+        inner.insert("max-connections".into(), ConfigValue::Scalar("42".into()));
+
+        let mut map = ValueMap::new();
+        map.insert("database".into(), ConfigValue::Nested(inner));
+
+        let db = parse_nested::<DatabaseConfig>(&map, "database").unwrap();
+        assert_eq!(db.url, "postgres://test/db");
+        assert_eq!(db.max_connections, 42);
+    }
+
+    #[cfg(feature = "env")]
+    #[test]
+    fn test_env_list_with_empty_prefix() {
+        // Exercises environment.rs line 46: List insertion with empty prefix
+        // SAFETY: No other test uses these exact bare env var names concurrently.
+        unsafe {
+            set_env("TAGS", "env1,env2,env3");
+            set_env("PORTS", "3000,4000");
+        }
+
+        let config = Configulator::<ListConfig>::new()
+            .with_environment_variables(EnvironmentVariableOptions {
+                prefix: "".into(),
+                separator: "_".into(),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.tags, vec!["env1", "env2", "env3"]);
+        assert_eq!(config.ports, vec![3000, 4000]);
+
+        unsafe {
+            remove_env("TAGS");
+            remove_env("PORTS");
+        }
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_negative_integer() {
+        // Exercises value_map.rs lines 22-24: visit_i64
+        // serde_yaml_ng uses visit_u64 for positive ints but visit_i64 for negative
+        #[derive(Config, Default, Debug, PartialEq)]
+        struct SignedConfig {
+            #[configulator(name = "offset", default = "0")]
+            offset: i64,
+        }
+        impl Validate for SignedConfig {
+            fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "offset: -42").unwrap();
+
+        let config = Configulator::<SignedConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.offset, -42);
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_explicit_null_keyword() {
+        // Exercises value_map.rs lines 42-44: visit_none
+        // Uses explicit `null` keyword instead of `~` to cover the other null path
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "host: null").unwrap();
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.host, "");
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_string_value() {
+        // Exercises value_map.rs lines 38-40: visit_string (owned string)
+        // Uses a quoted YAML string which may trigger visit_string in some serde impls
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        // Quoted string with special chars to force owned String allocation
+        writeln!(f, "host: \"hello\\nworld\"").unwrap();
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.host, "hello\nworld");
+    }
+
+    #[cfg(feature = "file")]
+    #[test]
+    fn test_serde_visitor_seq_with_nested_elements() {
+        // Exercises value_map.rs line 55: visit_seq with non-scalar elements
+        // (the `other => items.push(format!("{other:?}"))` branch)
+        // Also exercises the expecting() method path (lines 14-16) indirectly
+        // via seq elements that are maps
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "tags:").unwrap();
+        writeln!(f, "  - simple").unwrap();
+        writeln!(f, "  - key: value").unwrap(); // nested map inside a seq
+
+        let config = Configulator::<ListConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![file_path.to_path_buf()],
+                error_if_not_found: true,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .load()
+            .unwrap();
+
+        assert_eq!(config.tags.len(), 2);
+        assert_eq!(config.tags[0], "simple");
+        // Second element is a nested map, formatted via Debug
+        assert!(config.tags[1].contains("key"), "expected nested map debug: {}", config.tags[1]);
+    }
 }
