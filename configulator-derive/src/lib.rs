@@ -191,6 +191,7 @@ fn gen_from_value_map_field(
     }
 }
 
+#[derive(Debug)]
 enum TypeKind {
     Bool,
     Vec(Box<Type>),
@@ -217,4 +218,88 @@ fn classify_type(ty: &Type) -> TypeKind {
         }
     }
     TypeKind::Other
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_str;
+
+    // ── classify_type tests ──
+
+    #[test]
+    fn classify_type_bool() {
+        let ty: Type = parse_str("bool").unwrap();
+        assert!(matches!(classify_type(&ty), TypeKind::Bool));
+    }
+
+    #[test]
+    fn classify_type_vec_with_inner() {
+        let ty: Type = parse_str("Vec<String>").unwrap();
+        assert!(matches!(classify_type(&ty), TypeKind::Vec(_)));
+    }
+
+    #[test]
+    fn classify_type_scalar_string() {
+        let ty: Type = parse_str("String").unwrap();
+        assert!(matches!(classify_type(&ty), TypeKind::Other));
+    }
+
+    #[test]
+    fn classify_type_reference_is_other() {
+        let ty: Type = parse_str("&str").unwrap();
+        assert!(matches!(classify_type(&ty), TypeKind::Other));
+    }
+
+    #[test]
+    fn classify_type_tuple_is_other() {
+        let ty: Type = parse_str("(i32, i32)").unwrap();
+        assert!(matches!(classify_type(&ty), TypeKind::Other));
+    }
+
+    #[test]
+    fn classify_type_bare_vec_without_type_args() {
+        // A bare `Vec` with no angle brackets — exercises the Vec-without-type-arg branch
+        let ty: Type = parse_str("Vec").unwrap();
+        assert!(matches!(classify_type(&ty), TypeKind::Other));
+    }
+
+    // ── field_type_to_tokens tests ──
+
+    #[test]
+    fn field_type_to_tokens_bool() {
+        let ty: Type = parse_str("bool").unwrap();
+        let tokens = field_type_to_tokens(&ty).to_string();
+        assert!(tokens.contains("FieldType"), "expected FieldType in: {tokens}");
+        assert!(tokens.contains("Bool"), "expected Bool in: {tokens}");
+    }
+
+    #[test]
+    fn field_type_to_tokens_vec() {
+        let ty: Type = parse_str("Vec<u32>").unwrap();
+        let tokens = field_type_to_tokens(&ty).to_string();
+        assert!(tokens.contains("FieldType"), "expected FieldType in: {tokens}");
+        assert!(tokens.contains("List"), "expected List in: {tokens}");
+    }
+
+    #[test]
+    fn field_type_to_tokens_scalar() {
+        let ty: Type = parse_str("String").unwrap();
+        let tokens = field_type_to_tokens(&ty).to_string();
+        assert!(
+            tokens.contains("ConfigDetect"),
+            "expected ConfigDetect dispatch in: {tokens}"
+        );
+    }
+
+    #[test]
+    fn field_type_to_tokens_non_path_fallback() {
+        // A reference type is not Type::Path — exercises the fallback branch
+        let ty: Type = parse_str("&str").unwrap();
+        let tokens = field_type_to_tokens(&ty).to_string();
+        assert!(
+            tokens.contains("ConfigDetect"),
+            "expected ConfigDetect dispatch in fallback: {tokens}"
+        );
+    }
 }
