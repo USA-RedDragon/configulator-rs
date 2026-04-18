@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "Derive macro for configulator"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
+categories = ["config"]
 
 [lib]
 proc-macro = true
