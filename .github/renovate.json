@@ -1,7 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>USA-RedDragon/renovate-configs"
+    "local>USA-RedDragon/renovate-configs",
+    ":preserveSemverRanges"
   ],
   "cargo": {
     "rangeStrategy": "replace"
