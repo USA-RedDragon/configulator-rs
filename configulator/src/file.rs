@@ -30,14 +30,12 @@ where
             .map_err(|e| ConfigulatorError::FileError(e.to_string()))?;
         match value {
             ConfigValue::Nested(map) => Ok(map),
-            other => Err(ConfigulatorError::FileError(format!(
-                "config file root must be a mapping/table, got {}",
-                match other {
-                    ConfigValue::Scalar(_) => "a scalar value",
-                    ConfigValue::List(_) => "a list",
-                    ConfigValue::Nested(_) => unreachable!(),
-                },
-            ))),
+            ConfigValue::Scalar(_) => Err(ConfigulatorError::FileError(
+                "config file root must be a mapping/table, got a scalar value".into(),
+            )),
+            ConfigValue::List(_) => Err(ConfigulatorError::FileError(
+                "config file root must be a mapping/table, got a list".into(),
+            )),
         }
     }
 }
