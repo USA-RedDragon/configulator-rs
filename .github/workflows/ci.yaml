@@ -143,6 +143,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [docs, test-results, build-results]
     runs-on: ubuntu-24.04
+    environment: crates-io
     permissions:
       contents: read
       id-token: write
@@ -163,6 +164,7 @@ jobs:
           CRATES_IO_TOKEN=$(curl -sS -f -X POST \
             https://crates.io/api/v1/trusted_publishing/tokens \
             -H "Content-Type: application/json" \
+            -H 'User-Agent: configulator-rs CI (github.com/USA-RedDragon/configulator-rs)' \
             -d "{\"jwt\": \"$IDTOKEN\"}" \
             | jq -r '.token')
           if [ -z "$CRATES_IO_TOKEN" ] || [ "$CRATES_IO_TOKEN" = "null" ]; then
