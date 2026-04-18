@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 /// Options for loading configuration from a YAML file.
+#[cfg(feature = "file")]
 #[derive(Debug, Clone)]
 pub struct FileOptions {
     /// List of file paths to search. The first one found is used.
@@ -10,6 +11,7 @@ pub struct FileOptions {
 }
 
 /// Options for loading configuration from environment variables.
+#[cfg(feature = "env")]
 #[derive(Debug, Clone)]
 pub struct EnvironmentVariableOptions {
     /// Prefix for env vars (e.g. `"APP"` with separator `"__"` → `APP__PORT`).
@@ -19,6 +21,7 @@ pub struct EnvironmentVariableOptions {
 }
 
 /// Options for loading configuration from CLI flags.
+#[cfg(feature = "cli")]
 #[derive(Debug, Clone)]
 pub struct CLIFlagOptions {
     /// Separator for nested struct fields in flag names (e.g. `"."` → `--database.host`).

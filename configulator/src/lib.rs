@@ -136,13 +136,16 @@
 #![warn(clippy::all)]
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "cli")]
 mod cli;
 mod configulator;
 mod defaults;
 mod derive_helpers;
+#[cfg(feature = "env")]
 mod environment;
 mod error;
 mod field_info;
+#[cfg(feature = "file")]
 mod file;
 mod options;
 mod value_map;
@@ -153,7 +156,12 @@ pub use configulator_derive::Config;
 // Re-export public types
 pub use crate::configulator::Configulator;
 pub use crate::error::ConfigulatorError;
-pub use crate::options::{CLIFlagOptions, EnvironmentVariableOptions, FileOptions};
+#[cfg(feature = "cli")]
+pub use crate::options::CLIFlagOptions;
+#[cfg(feature = "env")]
+pub use crate::options::EnvironmentVariableOptions;
+#[cfg(feature = "file")]
+pub use crate::options::FileOptions;
 
 // Re-export derive-macro internals (used by generated code, not public API)
 #[doc(hidden)]

@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
     use configulator::*;
+    #[cfg(feature = "file")]
     use std::io::Write;
+    #[cfg(feature = "file")]
     use std::path::PathBuf;
 
     // ---- Test structs ----
@@ -119,6 +121,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_validation_fails() {
         // port=0 should fail validation
@@ -132,6 +135,7 @@ mod tests {
         assert!(err.to_string().contains("port must be non-zero"));
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_load_without_validation_skips_check() {
         let result = Configulator::<SimpleConfig>::new()
@@ -143,6 +147,7 @@ mod tests {
         assert_eq!(result.unwrap().port, 0);
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_yaml_file_loading() {
         let dir = tempfile::tempdir().unwrap();
@@ -165,6 +170,7 @@ mod tests {
         assert!(config.debug);
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_yaml_file_nested() {
         let dir = tempfile::tempdir().unwrap();
@@ -188,6 +194,7 @@ mod tests {
         assert_eq!(config.database.max_connections, 50);
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_yaml_file_not_found_no_error() {
         let config = Configulator::<SimpleConfig>::new()
@@ -202,6 +209,7 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_yaml_file_not_found_error() {
         let result = Configulator::<SimpleConfig>::new()
@@ -214,6 +222,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_yaml_file_first_found_wins() {
         let dir = tempfile::tempdir().unwrap();
@@ -237,6 +246,7 @@ mod tests {
         assert_eq!(config.port, 1111);
     }
 
+    #[cfg(feature = "env")]
     #[test]
     fn test_env_vars() {
         // SAFETY: No other test uses the TEST1_ prefix concurrently.
@@ -266,6 +276,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "env")]
     #[test]
     fn test_env_vars_nested() {
         // SAFETY: No other test uses the TEST2__ prefix concurrently.
@@ -294,6 +305,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "env")]
     #[test]
     fn test_env_vars_list() {
         // SAFETY: No other test uses the TEST3_ prefix concurrently.
@@ -319,6 +331,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_cli_flags_simple() {
         let config = Configulator::<SimpleConfig>::new()
@@ -336,6 +349,7 @@ mod tests {
         assert!(config.debug);
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn test_cli_flags_nested() {
         let config = Configulator::<NestedConfig>::new()
@@ -353,6 +367,7 @@ mod tests {
         assert_eq!(config.database.max_connections, 99);
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_precedence_file_over_default() {
         let dir = tempfile::tempdir().unwrap();
@@ -373,6 +388,7 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
     }
 
+    #[cfg(all(feature = "file", feature = "env"))]
     #[test]
     fn test_precedence_env_over_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -403,6 +419,7 @@ mod tests {
         unsafe { remove_env("TEST4_PORT") };
     }
 
+    #[cfg(all(feature = "file", feature = "env", feature = "cli"))]
     #[test]
     fn test_precedence_cli_over_all() {
         let dir = tempfile::tempdir().unwrap();
@@ -494,6 +511,7 @@ mod tests {
         assert!(err.to_string().contains("not_a_number"));
     }
 
+    #[cfg(feature = "file")]
     #[test]
     fn test_yaml_list_field() {
         let dir = tempfile::tempdir().unwrap();
@@ -541,6 +559,7 @@ mod tests {
         assert_eq!(fields[1].config_name, "count");
     }
 
+    #[cfg(all(feature = "file", feature = "cli"))]
     #[test]
     fn test_cli_config_flag() {
         // When with_file is called first, --config / -c gets registered
@@ -567,6 +586,7 @@ mod tests {
         assert_eq!(config.port, 6060);
     }
 
+    #[cfg(feature = "env")]
     #[test]
     fn test_env_dashes_to_underscores() {
         // config name "app-name" should become env var PREFIX_APP_NAME

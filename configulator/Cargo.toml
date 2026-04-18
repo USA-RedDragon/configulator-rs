@@ -14,10 +14,24 @@ exclude = [".github/", "target/"]
 [lib]
 name = "configulator"
 
+[features]
+default = ["file", "cli", "env"]
+file = ["dep:serde_yaml_ng"]
+cli = ["dep:clap"]
+env = []
+
 [dependencies]
 configulator-derive = { version = "0.1.0", path = "../configulator-derive" }
-serde_yaml_ng = "0.10"
-clap = { version = "4", features = ["string"] }
+serde_yaml_ng = { version = "0.10", optional = true }
+clap = { version = "4", features = ["string"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+
+[[example]]
+name = "basic"
+required-features = ["file", "cli", "env"]
+
+[[example]]
+name = "advanced"
+required-features = ["file", "cli", "env"]
