@@ -35,3 +35,7 @@ required-features = ["file", "cli", "env"]
 [[example]]
 name = "advanced"
 required-features = ["file", "cli", "env"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

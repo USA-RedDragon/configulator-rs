@@ -135,6 +135,7 @@
 
 #![warn(clippy::all)]
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "cli")]
 mod cli;
