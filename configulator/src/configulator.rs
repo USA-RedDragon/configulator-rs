@@ -182,6 +182,9 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
     }
 
     /// Get the default config (all defaults applied, no other sources).
+    ///
+    /// Validation is **not** performed. Call
+    /// [`Validate::validate`](crate::Validate::validate) on the result if needed.
     pub fn defaults_only() -> Result<C, ConfigulatorError> {
         let fields = C::configulator_fields();
         let defaults = defaults::load_defaults(&fields);
