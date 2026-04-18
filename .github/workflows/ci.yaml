@@ -92,7 +92,6 @@ jobs:
           echo "All tests passed"
 
   build:
-    needs: [ version ]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -124,8 +123,6 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --target ${{ matrix.target }} --release
-        env:
-          PKG_VERSION: ${{ needs.version.outputs.version }}
 
   build-results:
     if: always()
