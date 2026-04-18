@@ -2,6 +2,7 @@
 name = "configulator-rs"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.70"
 license = "MIT"
 description = "A configuration loader that populates a struct from YAML files, environment variables, and CLI flags"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
@@ -12,10 +13,10 @@ readme = "../README.md"
 name = "configulator"
 
 [dependencies]
-configulator-derive = { version = "=0.1.0", path = "../configulator-derive" }
-serde = { version = "=1.0.228", features = ["derive"] }
-serde_yaml_ng = "=0.10.0"
-clap = { version = "=4.6.1", features = ["derive", "string"] }
+configulator-derive = { version = "0.1.0", path = "../configulator-derive" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml_ng = "0.10"
+clap = { version = "4", features = ["string"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
