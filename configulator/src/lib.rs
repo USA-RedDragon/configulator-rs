@@ -12,8 +12,8 @@
 //!
 //! - `#[derive(Config)]` macro for declarative configuration structs
 //! - Nested struct support with automatic detection
-//! - `Vec<T>` list fields
-//! - Custom types — anything implementing `FromStr + Default`
+//! - [`Vec<T>`](Vec) list fields
+//! - Custom types — anything implementing [`FromStr`](std::str::FromStr) + [`Default`]
 //! - Optional validation via the [`Validate`] trait
 //! - Boolean CLI flags (`--debug` sets true, `--debug false` sets false)
 //!
@@ -127,10 +127,10 @@
 //!
 //! ## Supported Types
 //!
-//! - All primitive scalars (`i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, `String`)
-//! - `PathBuf` and any other `FromStr + Default` type
-//! - Custom enums (implement `FromStr + Default`)
-//! - `Vec<T>` for list values (comma-separated defaults, repeated CLI flags)
+//! - All primitive scalars (`i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, [`String`])
+//! - [`PathBuf`](std::path::PathBuf) and any other [`FromStr`](std::str::FromStr) + [`Default`] type
+//! - Custom enums (implement [`FromStr`](std::str::FromStr) + [`Default`])
+//! - [`Vec<T>`](Vec) for list values (comma-separated defaults, repeated CLI flags)
 //! - Nested structs (must also derive `Config`)
 
 #![warn(clippy::all)]
