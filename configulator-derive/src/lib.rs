@@ -10,7 +10,10 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Data, Fields, Type, PathArguments, GenericArgument};
+use syn::{
+    parse_macro_input, DeriveInput, Data, Fields, Type, PathArguments, GenericArgument,
+    punctuated::Punctuated, Token,
+};
 
 /// Derive macro that generates `ConfigFields` and `FromValueMap` implementations for a struct.
 ///
@@ -25,23 +28,9 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let fields = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => &fields.named,
-            _ => {
-                return syn::Error::new_spanned(
-                    name,
-                    "Config can only be derived for structs with named fields",
-                )
-                .to_compile_error()
-                .into();
-            }
-        },
-        _ => {
-            return syn::Error::new_spanned(name, "Config can only be derived for structs")
-                .to_compile_error()
-                .into();
-        }
+    let fields = match extract_named_fields(&input) {
+        Ok(f) => f,
+        Err(err) => return err.to_compile_error().into(),
     };
 
     let mut field_info_tokens = Vec::new();
@@ -52,43 +41,19 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
         let field_name_str = field_ident.to_string();
         let field_ty = &field.ty;
 
-        let mut config_name: Option<String> = None;
-        let mut default_val: Option<String> = None;
-        let mut description: Option<String> = None;
+        let attrs = match parse_configulator_attrs(&field.attrs) {
+            Ok(a) => a,
+            Err(err) => return err.to_compile_error().into(),
+        };
 
-        for attr in &field.attrs {
-            if !attr.path().is_ident("configulator") {
-                continue;
-            }
-            let parse_result = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("name") {
-                    let value = meta.value()?;
-                    let lit: syn::LitStr = value.parse()?;
-                    config_name = Some(lit.value());
-                } else if meta.path.is_ident("default") {
-                    let value = meta.value()?;
-                    let lit: syn::LitStr = value.parse()?;
-                    default_val = Some(lit.value());
-                } else if meta.path.is_ident("description") {
-                    let value = meta.value()?;
-                    let lit: syn::LitStr = value.parse()?;
-                    description = Some(lit.value());
-                }
-                Ok(())
-            });
-            if let Err(err) = parse_result {
-                return err.to_compile_error().into();
-            }
-        }
-
-        let config_name_str = config_name.unwrap_or_else(|| field_name_str.clone());
+        let config_name_str = attrs.config_name.unwrap_or_else(|| field_name_str.clone());
         let field_type_token = field_type_to_tokens(field_ty);
 
-        let default_tokens = match &default_val {
+        let default_tokens = match &attrs.default_val {
             Some(v) => quote! { Some(#v) },
             None => quote! { None },
         };
-        let desc_tokens = match &description {
+        let desc_tokens = match &attrs.description {
             Some(v) => quote! { Some(#v) },
             None => quote! { None },
         };
@@ -132,6 +97,65 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Extract named fields from a `DeriveInput`, returning an error for non-structs
+/// or structs without named fields.
+fn extract_named_fields(
+    input: &DeriveInput,
+) -> Result<&Punctuated<syn::Field, Token![,]>, syn::Error> {
+    match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => Ok(&fields.named),
+            _ => Err(syn::Error::new_spanned(
+                &input.ident,
+                "Config can only be derived for structs with named fields",
+            )),
+        },
+        _ => Err(syn::Error::new_spanned(
+            &input.ident,
+            "Config can only be derived for structs",
+        )),
+    }
+}
+
+struct FieldConfigAttrs {
+    config_name: Option<String>,
+    default_val: Option<String>,
+    description: Option<String>,
+}
+
+/// Parse `#[configulator(...)]` attributes from a field's attribute list.
+/// Non-configulator attributes are skipped. Returns an error if attribute
+/// syntax is malformed.
+fn parse_configulator_attrs(attrs: &[syn::Attribute]) -> Result<FieldConfigAttrs, syn::Error> {
+    let mut result = FieldConfigAttrs {
+        config_name: None,
+        default_val: None,
+        description: None,
+    };
+    for attr in attrs {
+        if !attr.path().is_ident("configulator") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("name") {
+                let value = meta.value()?;
+                let lit: syn::LitStr = value.parse()?;
+                result.config_name = Some(lit.value());
+            } else if meta.path.is_ident("default") {
+                let value = meta.value()?;
+                let lit: syn::LitStr = value.parse()?;
+                result.default_val = Some(lit.value());
+            } else if meta.path.is_ident("description") {
+                let value = meta.value()?;
+                let lit: syn::LitStr = value.parse()?;
+                result.description = Some(lit.value());
+            }
+            Ok(())
+        })?;
+    }
+    Ok(result)
 }
 
 /// Map a Rust type to the simplified `FieldType` enum (Bool, Scalar, List, Struct).
@@ -225,6 +249,101 @@ mod tests {
     use super::*;
     use syn::parse_str;
 
+    // ── extract_named_fields tests ──
+
+    #[test]
+    fn extract_named_fields_accepts_named_struct() {
+        let input: DeriveInput = parse_str("struct Foo { x: u32 }").unwrap();
+        assert!(extract_named_fields(&input).is_ok());
+    }
+
+    #[test]
+    fn extract_named_fields_rejects_tuple_struct() {
+        let input: DeriveInput = parse_str("struct Foo(u32);").unwrap();
+        let err = extract_named_fields(&input).unwrap_err();
+        assert!(
+            err.to_string().contains("named fields"),
+            "expected 'named fields' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_named_fields_rejects_unit_struct() {
+        let input: DeriveInput = parse_str("struct Foo;").unwrap();
+        let err = extract_named_fields(&input).unwrap_err();
+        assert!(
+            err.to_string().contains("named fields"),
+            "expected 'named fields' error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_named_fields_rejects_enum() {
+        let input: DeriveInput = parse_str("enum Foo { A, B }").unwrap();
+        let err = extract_named_fields(&input).unwrap_err();
+        assert!(
+            err.to_string().contains("only be derived for structs"),
+            "expected 'only be derived for structs' error, got: {err}"
+        );
+    }
+
+    // ── parse_configulator_attrs tests ──
+
+    #[test]
+    fn parse_attrs_extracts_all_keys() {
+        let input: DeriveInput = parse_str(
+            r#"struct Foo { #[configulator(name = "n", default = "d", description = "desc")] f: u32 }"#,
+        )
+        .unwrap();
+        let fields = extract_named_fields(&input).unwrap();
+        let attrs = parse_configulator_attrs(&fields.first().unwrap().attrs).unwrap();
+        assert_eq!(attrs.config_name.as_deref(), Some("n"));
+        assert_eq!(attrs.default_val.as_deref(), Some("d"));
+        assert_eq!(attrs.description.as_deref(), Some("desc"));
+    }
+
+    #[test]
+    fn parse_attrs_skips_non_configulator() {
+        let input: DeriveInput = parse_str(
+            r#"struct Foo { #[allow(unused)] #[configulator(name = "bar")] f: String }"#,
+        )
+        .unwrap();
+        let fields = extract_named_fields(&input).unwrap();
+        let attrs = parse_configulator_attrs(&fields.first().unwrap().attrs).unwrap();
+        assert_eq!(attrs.config_name.as_deref(), Some("bar"));
+    }
+
+    #[test]
+    fn parse_attrs_ignores_unknown_key() {
+        let input: DeriveInput = parse_str(
+            r#"struct Foo { #[configulator(name = "bar", extra)] f: String }"#,
+        )
+        .unwrap();
+        let fields = extract_named_fields(&input).unwrap();
+        let attrs = parse_configulator_attrs(&fields.first().unwrap().attrs).unwrap();
+        assert_eq!(attrs.config_name.as_deref(), Some("bar"));
+    }
+
+    #[test]
+    fn parse_attrs_error_on_bad_value_type() {
+        let input: DeriveInput = parse_str(
+            r#"struct Foo { #[configulator(name = 42)] f: String }"#,
+        )
+        .unwrap();
+        let fields = extract_named_fields(&input).unwrap();
+        assert!(parse_configulator_attrs(&fields.first().unwrap().attrs).is_err());
+    }
+
+    #[test]
+    fn parse_attrs_no_attrs_returns_none() {
+        let input: DeriveInput = parse_str("struct Foo { f: String }").unwrap();
+        let fields = extract_named_fields(&input).unwrap();
+        let attrs = parse_configulator_attrs(&fields.first().unwrap().attrs).unwrap();
+        assert!(attrs.config_name.is_none());
+        assert!(attrs.default_val.is_none());
+        assert!(attrs.description.is_none());
+    }
+
     // ── classify_type tests ──
 
     #[test]
@@ -259,7 +378,6 @@ mod tests {
 
     #[test]
     fn classify_type_bare_vec_without_type_args() {
-        // A bare `Vec` with no angle brackets — exercises the Vec-without-type-arg branch
         let ty: Type = parse_str("Vec").unwrap();
         assert!(matches!(classify_type(&ty), TypeKind::Other));
     }
@@ -294,7 +412,6 @@ mod tests {
 
     #[test]
     fn field_type_to_tokens_non_path_fallback() {
-        // A reference type is not Type::Path — exercises the fallback branch
         let ty: Type = parse_str("&str").unwrap();
         let tokens = field_type_to_tokens(&ty).to_string();
         assert!(
