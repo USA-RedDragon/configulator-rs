@@ -10,6 +10,15 @@ pub enum ConfigulatorError {
     /// Failed to read or parse a config file.
     #[cfg(feature = "file")]
     FileError(String),
+    /// An explicitly named config file (e.g. via `--config`) could not be
+    /// read.
+    #[cfg(feature = "file")]
+    ExplicitFileError {
+        /// The path as the operator provided it.
+        path: std::path::PathBuf,
+        /// The underlying IO failure.
+        message: String,
+    },
     /// Failed to parse a value from a string.
     ParseError { field: String, value: String, message: String },
     /// Validation failed.
@@ -26,6 +35,10 @@ impl fmt::Display for ConfigulatorError {
             Self::FileNotFound => write!(f, "config file not found"),
             #[cfg(feature = "file")]
             Self::FileError(msg) => write!(f, "file error: {msg}"),
+            #[cfg(feature = "file")]
+            Self::ExplicitFileError { path, message } => {
+                write!(f, "config file {}: {message}", path.display())
+            }
             Self::ParseError { field, value, message } => {
                 write!(f, "failed to parse field '{field}' value '{value}': {message}")
             }

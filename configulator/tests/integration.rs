@@ -1407,4 +1407,133 @@ mod tests {
             "unexpected error message: {err}"
         );
     }
+
+    #[cfg(all(feature = "file", feature = "cli"))]
+    #[test]
+    fn test_explicit_config_missing_is_hard_error() {
+        // A typo'd --config must fail loudly, even with error_if_not_found:
+        // false — silently booting on defaults is the bug this fixes.
+        let err = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![],
+                error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec![
+                "--config".into(),
+                "/nonexistent/typo'd/config.yaml".into(),
+            ])
+            .load()
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("/nonexistent/typo'd/config.yaml"),
+            "error must name the path the operator typed: {msg}"
+        );
+    }
+
+    #[cfg(all(feature = "file", feature = "cli"))]
+    #[test]
+    fn test_explicit_config_does_not_fall_back_to_search_paths() {
+        // A valid search-path file exists, but the explicitly named path does
+        // not: the load must still fail. Pre-v0.1.4 the bad path was merely
+        // prepended and the search path silently won.
+        let dir = tempfile::tempdir().unwrap();
+        let good = dir.path().join("good.yaml");
+        let mut f = std::fs::File::create(&good).unwrap();
+        writeln!(f, "host: from-search-path").unwrap();
+
+        let err = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![good],
+                error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec!["--config".into(), "/does/not/exist.yaml".into()])
+            .load()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("/does/not/exist.yaml"),
+            "explicit path must not fall back to search paths: {err}"
+        );
+    }
+
+    #[cfg(all(feature = "file", feature = "cli"))]
+    #[test]
+    fn test_explicit_config_valid_path_loads() {
+        // The happy path: an explicit --config that exists loads that file.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("explicit.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "host: from-explicit").unwrap();
+
+        let config = Configulator::<SimpleConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![PathBuf::from("/some/other/search.yaml")],
+                error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec![
+                "--config".into(),
+                file_path.to_string_lossy().to_string(),
+            ])
+            .load()
+            .unwrap();
+        assert_eq!(config.host, "from-explicit");
+    }
+
+    // ---- The --config path travels out of band (v0.1.4): a config field
+    // ---- named "__config_file__" is an ordinary field, not a collision.
+
+    #[derive(Config, Default, Debug, PartialEq)]
+    struct SentinelNameConfig {
+        #[configulator(name = "__config_file__", default = "unset")]
+        sentinel: String,
+
+        #[configulator(name = "host", default = "localhost")]
+        host: String,
+    }
+
+    impl Validate for SentinelNameConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    #[cfg(all(feature = "file", feature = "cli"))]
+    #[test]
+    fn test_field_named_like_old_sentinel_survives() {
+        // Pre-v0.1.4 the --config path was smuggled through the value map
+        // under "__config_file__" and stripped before merge, which would have
+        // destroyed a user field with that name. It now travels out of band.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "host: from-file").unwrap();
+
+        let config = Configulator::<SentinelNameConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![],
+                error_if_not_found: false,
+                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            })
+            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
+            .with_cli_args(vec![
+                "--config".into(),
+                file_path.to_string_lossy().to_string(),
+                "--__config_file__".into(),
+                "user-value".into(),
+            ])
+            .load()
+            .unwrap();
+        assert_eq!(config.host, "from-file");
+        assert_eq!(
+            config.sentinel, "user-value",
+            "a field named __config_file__ must survive --config handling"
+        );
+    }
+
 }

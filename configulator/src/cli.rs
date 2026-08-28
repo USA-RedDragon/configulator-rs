@@ -8,13 +8,15 @@ use crate::value_map::{ConfigValue, ValueMap};
 /// Builds a clap `Command` dynamically from the field metadata and parses
 /// the provided args. Flag names for nested structs use the configured separator
 /// (e.g. `--database.host` with separator `.`).
+///
+/// Returns the parsed values alongside the `--config` path, if one was given.
 pub fn load_from_cli(
     opts: &CLIFlagOptions,
     fields: &[FieldInfo],
     args: &[String],
     config_file_flag: bool,
     base_cmd: Option<clap::Command>,
-) -> Result<ValueMap, ConfigulatorError> {
+) -> Result<(ValueMap, Option<String>), ConfigulatorError> {
     let mut cmd = base_cmd
         .unwrap_or_else(|| clap::Command::new("app"))
         .no_binary_name(true)
@@ -36,19 +38,15 @@ pub fn load_from_cli(
         .try_get_matches_from(args)
         .map_err(|e| ConfigulatorError::CLIError(e.to_string()))?;
 
-    let mut map = extract_values(&matches, fields, "", &opts.separator);
+    let map = extract_values(&matches, fields, "", &opts.separator);
 
-    // If a config file path was given via --config / -c, store it specially
-    if config_file_flag {
-        if let Some(path) = matches.get_one::<String>("config") {
-            map.insert(
-                "__config_file__".to_string(),
-                ConfigValue::Scalar(path.clone()),
-            );
-        }
-    }
+    let config_path = if config_file_flag {
+        matches.get_one::<String>("config").cloned()
+    } else {
+        None
+    };
 
-    Ok(map)
+    Ok((map, config_path))
 }
 
 fn build_flag_name(prefix: &str, separator: &str, config_name: &str) -> String {

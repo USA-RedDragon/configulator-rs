@@ -1,6 +1,4 @@
 use std::marker::PhantomData;
-#[cfg(feature = "file")]
-use std::path::PathBuf;
 
 #[cfg(feature = "cli")]
 use crate::cli;
@@ -17,8 +15,6 @@ use crate::options::EnvironmentVariableOptions;
 #[cfg(feature = "cli")]
 use crate::options::CLIFlagOptions;
 use crate::value_map::{merge_value_maps, ValueMap};
-#[cfg(all(feature = "cli", feature = "file"))]
-use crate::value_map::ConfigValue;
 use crate::{ConfigFields, FromValueMap, Validate};
 
 /// Builder for loading configuration from multiple sources into a typed struct.
@@ -131,9 +127,10 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         let defaults = defaults::load_defaults(&fields);
         merge_value_maps(&mut merged, &defaults);
 
-        // 2. Parse CLI once (if configured) to get both config path and values
+        // 2. Parse CLI once (if configured) to get both config path and values.
+        // The --config path travels out of band, not through the value map.
         #[cfg(feature = "cli")]
-        let cli_values = if let Some(ref opts) = self.cli_opts {
+        let (cli_values, cli_config_path) = if let Some(ref opts) = self.cli_opts {
             let args = self.get_cli_args();
             let has_file = {
                 #[cfg(feature = "file")]
@@ -141,30 +138,26 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
                 #[cfg(not(feature = "file"))]
                 { false }
             };
-            Some(cli::load_from_cli(opts, &fields, &args, has_file, self.cli_command.clone())?)
+            let (values, config_path) =
+                cli::load_from_cli(opts, &fields, &args, has_file, self.cli_command.clone())?;
+            (Some(values), config_path)
         } else {
-            None
+            (None, None)
         };
-        #[cfg(not(feature = "cli"))]
-        let cli_values = None::<ValueMap>;
 
-        // 3. File
+        // 3. File. A typo'd --config must not silently
+        // boot the app on defaults.
         #[cfg(feature = "file")]
-        {
-            let mut file_opts = self.file_opts;
-            // Prepend --config path if CLI provided one and .with_file() was called
+        if let Some(ref opts) = self.file_opts {
             #[cfg(feature = "cli")]
-            if let Some(ref mut opts) = file_opts {
-                if let Some(ref cli_vals) = cli_values {
-                    if let Some(ConfigValue::Scalar(path)) = cli_vals.get("__config_file__") {
-                        opts.paths.insert(0, PathBuf::from(path));
-                    }
-                }
-            }
-            if let Some(ref opts) = file_opts {
-                let file_values = file::load_from_file(opts)?;
-                merge_value_maps(&mut merged, &file_values);
-            }
+            let file_values = if let Some(ref path) = cli_config_path {
+                file::load_from_explicit(opts, std::path::Path::new(path))?
+            } else {
+                file::load_from_file(opts)?
+            };
+            #[cfg(not(feature = "cli"))]
+            let file_values = file::load_from_file(opts)?;
+            merge_value_maps(&mut merged, &file_values);
         }
 
         // 4. Environment variables
@@ -176,8 +169,7 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
 
         // 5. CLI flags (highest precedence)
         #[cfg(feature = "cli")]
-        if let Some(mut cli_values) = cli_values {
-            cli_values.remove("__config_file__");
+        if let Some(cli_values) = cli_values {
             merge_value_maps(&mut merged, &cli_values);
         }
 

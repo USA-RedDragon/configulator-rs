@@ -65,6 +65,26 @@ where
     Box::new(SerdeLoader(f))
 }
 
+/// Load configuration from an explicitly named file (e.g. `--config <path>`).
+///
+/// Unlike [`load_from_file`], a path the operator named must exist: any
+/// failure to read it, including the file not existing, is a hard error
+/// regardless of [`FileOptions::error_if_not_found`], and there is no
+/// fallback to [`FileOptions::paths`]. A typo'd `--config` fails
+/// loudly instead of silently booting on defaults.
+#[cfg(feature = "cli")]
+pub fn load_from_explicit(
+    opts: &FileOptions,
+    path: &std::path::Path,
+) -> Result<ValueMap, ConfigulatorError> {
+    let contents =
+        std::fs::read_to_string(path).map_err(|e| ConfigulatorError::ExplicitFileError {
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })?;
+    opts.loader.load(&contents)
+}
+
 /// Load configuration from the first file found in the given paths,
 /// using the loader specified in [`FileOptions`].
 pub fn load_from_file(opts: &FileOptions) -> Result<ValueMap, ConfigulatorError> {
