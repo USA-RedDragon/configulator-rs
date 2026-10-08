@@ -2,7 +2,7 @@
 name = "configulator-rs"
 version = "0.1.4"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.85"
 license = "MIT"
 description = "A configuration loader that populates a struct from config files, environment variables, and CLI flags"
 repository = "https://github.com/USA-RedDragon/configulator-rs"
