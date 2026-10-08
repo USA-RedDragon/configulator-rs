@@ -185,6 +185,7 @@
 
 #[cfg(feature = "cli")]
 mod cli;
+mod complex;
 mod configulator;
 mod duration;
 mod error;
@@ -198,6 +199,7 @@ mod shadow;
 
 pub use configulator_derive::Config;
 
+pub use crate::complex::{Complex128, Complex64};
 pub use crate::configulator::Configulator;
 pub use crate::duration::Duration;
 pub use crate::error::ConfigulatorError;

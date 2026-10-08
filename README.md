@@ -98,6 +98,9 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
   - `Vec` and `HashMap`/`BTreeMap` of structs, and maps of scalars (files
     only)
   - `configulator::Duration` for Go-style durations (`30s`, `1h30m`)
+  - `configulator::Complex64` and `Complex128`, parsed like Go
+    (`1+2i`, `(1-2i)`, `3`). The `num-complex` feature converts them to and
+    from `num_complex::Complex`
 - `load_with_report()` returns a `Report` of where each field's value came
   from: its default, the config file, an environment variable or a flag,
   naming which one
@@ -133,7 +136,7 @@ include its trailing separator: with prefix `MYAPP_` and separator `_`,
 
 ## Cargo features
 
-All on by default except `testing`.
+All on by default except `testing` and `num-complex`.
 
 | Feature | Meaning |
 | --- | --- |
@@ -141,6 +144,7 @@ All on by default except `testing`.
 | `env` | Environment variables |
 | `cli` | Command-line flags, using clap |
 | `testing` | `with_cli_args()` and `with_env_vars()` for tests |
+| `num-complex` | Conversions between the complex types and `num_complex::Complex` |
 
 ## configulator-cli
 

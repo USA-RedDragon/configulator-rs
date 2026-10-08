@@ -21,11 +21,13 @@ file = ["dep:serde", "configulator-derive/file"]
 cli = ["dep:clap", "configulator-derive/cli"]
 env = ["configulator-derive/env"]
 testing = ["cli"]
+num-complex = ["dep:num-complex"]
 
 [dependencies]
 configulator-derive = { version = "0.2.4", path = "../configulator-derive", default-features = false }
 clap = { version = "4", features = ["string"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+num-complex = { version = "0.4", default-features = false, optional = true }
 
 [dev-dependencies]
 configulator-rs = { path = ".", features = ["testing"] }

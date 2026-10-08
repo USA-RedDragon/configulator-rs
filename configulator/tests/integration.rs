@@ -1664,3 +1664,75 @@ fn list_defaults_render_as_valid_yaml_and_typed_schema() {
         "{schema}"
     );
 }
+
+#[derive(Config, Debug, PartialEq)]
+struct ComplexConfig {
+    #[configulator(name = "z", default = "1+2i")]
+    z: configulator::Complex128,
+    #[configulator(name = "exponent")]
+    exponent: configulator::Complex64,
+    #[configulator(name = "roots", default = "1i,2")]
+    roots: Vec<configulator::Complex128>,
+}
+
+impl Validate for ComplexConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn complex_numbers_in_every_layer() {
+    use configulator::{Complex128, Complex64};
+    let config = Configulator::<ComplexConfig>::new().load().unwrap();
+    assert_eq!(config.z, Complex128::new(1.0, 2.0));
+    assert_eq!(
+        config.roots,
+        vec![Complex128::new(0.0, 1.0), Complex128::new(2.0, 0.0)]
+    );
+
+    let f = yaml_file("z: \"(3-4i)\"\nexponent: 3\nroots: [\"5i\", 6]\n");
+    let config = Configulator::<ComplexConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(config.z, Complex128::new(3.0, -4.0));
+    assert_eq!(config.exponent, Complex64::new(3.0, 0.0));
+    assert_eq!(
+        config.roots,
+        vec![Complex128::new(0.0, 5.0), Complex128::new(6.0, 0.0)]
+    );
+
+    let config = Configulator::<ComplexConfig>::new()
+        .with_environment_variables(env_opts("C_"))
+        .with_env_vars(env(&[("C_Z", "2i"), ("C_ROOTS", "1+1i,-1-1i")]))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--exponent", "(0.5+0.5i)"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.z, Complex128::new(0.0, 2.0));
+    assert_eq!(config.exponent, Complex64::new(0.5, 0.5));
+    assert_eq!(
+        config.roots,
+        vec![Complex128::new(1.0, 1.0), Complex128::new(-1.0, -1.0)]
+    );
+
+    let err = Configulator::<ComplexConfig>::new()
+        .with_environment_variables(env_opts("C_"))
+        .with_env_vars(env(&[("C_Z", "1+2j")]))
+        .load()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::ParseError { .. }), "{err}");
+
+    let schema = Configulator::<ComplexConfig>::json_schema();
+    let schema = schema.split_whitespace().collect::<String>();
+    assert!(
+        schema.contains(r#""z":{"default":"1+2i","type":"string"}"#),
+        "{schema}"
+    );
+    let sample = Configulator::<ComplexConfig>::sample_config();
+    assert!(sample.contains(r#"z: "1+2i""#), "{sample}");
+    assert!(sample.contains(r#"roots: ["1i", "2"]"#), "{sample}");
+}
