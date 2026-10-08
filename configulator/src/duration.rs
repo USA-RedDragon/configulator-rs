@@ -6,7 +6,9 @@ use std::time::Duration as StdDuration;
 /// duration strings: `"30s"`, `"1h30m"`, `"500ms"`, `"1.5h"`.
 ///
 /// Units: `ns`, `us`/`µs`, `ms`, `s`, `m`, `h`. Concatenation and decimal
-/// fractions are supported, matching Go's `time.ParseDuration`.
+/// fractions are supported, matching Go's `time.ParseDuration`, and so is
+/// Go's maximum of `2562047h47m16.854775807s`. Negative durations are not
+/// supported.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Duration(pub StdDuration);
 
@@ -104,7 +106,10 @@ impl FromStr for Duration {
                 .checked_add(int_nanos + frac_nanos)
                 .ok_or_else(overflow)?;
         }
-        let secs = u64::try_from(total / 1_000_000_000).map_err(|_| overflow())?;
+        if total > i64::MAX as u128 {
+            return Err(overflow());
+        }
+        let secs = (total / 1_000_000_000) as u64;
         Ok(Duration(StdDuration::new(
             secs,
             (total % 1_000_000_000) as u32,
@@ -201,6 +206,9 @@ mod tests {
     #[test]
     fn too_large_is_an_error_not_a_panic() {
         assert!("99999999999999999999h".parse::<Duration>().is_err());
+        assert!("3000000h".parse::<Duration>().is_err());
+        assert!("2562047h47m16.854775807s".parse::<Duration>().is_ok());
+        assert!("2562047h47m16.854775808s".parse::<Duration>().is_err());
         assert!("99999999999999999999999999999999999999999h"
             .parse::<Duration>()
             .is_err());
