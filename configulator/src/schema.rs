@@ -160,7 +160,7 @@ fn schema_field(f: &FieldInfo) -> Vec<(String, J)> {
             ));
         }
     }
-    if let Some(default) = f.default_value {
+    if let Some(default) = f.default_value.filter(|_| !f.secret) {
         if let Some(d) = schema_default(f, default) {
             s.push(("default".into(), d));
         }
@@ -412,7 +412,7 @@ fn markdown_fields(
             d
         };
         let default_cell = |f: &FieldInfo| match f.default_value {
-            Some(d) if !d.is_empty() => format!("`{d}`"),
+            Some(d) if !d.is_empty() && !f.secret => format!("`{d}`"),
             _ => String::new(),
         };
         match &f.field_type {
