@@ -1,98 +1,51 @@
 # Configulator
 
-[![codecov](https://codecov.io/github/usa-reddragon/configulator-rs/graph/badge.svg?token=VcJUr2qOGS)](https://codecov.io/github/usa-reddragon/configulator-rs) [![License](https://badgen.net/github/license/USA-RedDragon/configulator-rs)](https://github.com/USA-RedDragon/configulator-rs/blob/main/LICENSE) [![GitHub contributors](https://badgen.net/github/contributors/USA-RedDragon/configulator-rs)](https://github.com/USA-RedDragon/configulator-rs/graphs/contributors/)
+[![crates.io](https://img.shields.io/crates/v/configulator-rs.svg)](https://crates.io/crates/configulator-rs) [![codecov](https://codecov.io/github/usa-reddragon/configulator-rs/graph/badge.svg?token=VcJUr2qOGS)](https://codecov.io/github/usa-reddragon/configulator-rs) [![License](https://badgen.net/github/license/USA-RedDragon/configulator-rs)](https://github.com/USA-RedDragon/configulator-rs/blob/main/LICENSE)
 
-A simple configuration manager for Rust applications with derive macro support.
-This is the Rust version of [configulator](https://github.com/USA-RedDragon/configulator) (Go), and both are tested against the same spec.
+Load a Rust config struct from defaults, a config file, environment variables
+and command-line flags, using `#[derive(Config)]`.
 
-## Features
+This is the Rust version of
+[configulator](https://github.com/USA-RedDragon/configulator) (Go). Both
+follow the same [spec](https://github.com/USA-RedDragon/configulator/blob/main/spec/SPEC.md).
 
-- Supports configuration from multiple sources with clear precedence:
-  1. Default values (lowest)
-  2. Config files (any serde format via `serde_loader`)
-  3. Environment variables
-  4. CLI flags (highest)
-- `#[derive(Config)]` macro for declarative configuration structs
-- Any serde-compatible file format - YAML, TOML, JSON, with a one-liner
-- Nested structs, `Vec<T>`, maps, `Vec<Struct>`, and `Option<T>` fields
-- Custom types - anything implementing `FromStr`, no serde impls needed
-- Per-field origin report: which source set each value
-- `secret` redaction, `required` fields, and a generated `print_config()`
-- Go-style `Duration` (`"30s"`, `"1h30m"`)
-- Optional validation via the `Validate` trait
-- Boolean CLI flags (`--debug` sets true, `--debug false` sets false)
+## Installation
 
-## Supported Types
+Requires Rust 1.85 or later.
 
-- All primitive scalars (`i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, `String`)
-- `PathBuf`, `configulator::Duration`, and any other `FromStr` type
-- `Option<T>` of a scalar or nested struct. It stays `None` unless a source sets it, and `null` in a file counts as unset.
-- `Vec<T>` of scalars, and `Vec<T>` of nested structs (file only)
-- `HashMap`/`BTreeMap` with scalar or nested struct values (file only)
-- Nested structs (must also derive `Config` and be marked `nested`)
-
-## Usage
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-configulator-rs = "0.2"
+```sh
+cargo add configulator-rs
+cargo add serde_yaml_ng  # or any other serde format for config files
 ```
 
-> [!NOTE]
-> The same option is spelled differently per source (`http.host` in a config file is `HTTP__HOST` in env vars), so two fields in the same struct can't have names that only differ by case or `-`/`_`. That's a compile error.
-
-### Derive Attributes
-
-Fields use the `#[configulator(...)]` attribute:
-
-|              Key               |                          Description                          |
-| ------------------------------ | ------------------------------------------------------------- |
-| `name`                         | Config key name (defaults to the field name)                  |
-| `default`                      | Default value as a string literal                             |
-| `description`                  | Help text shown in CLI `--help` output                        |
-| `nested`                       | The field's type (or `Vec`/map element type) derives `Config` |
-| `env = "-"` / `env = "NAME"`   | Skip env, or override this field's env segment                |
-| `flag = "-"` / `flag = "NAME"` | Skip CLI, or override this field's flag segment               |
-| `short = 'p'`                  | Single-character CLI shorthand                                |
-| `secret`                       | Redacted in `print_config()` and parse errors                 |
-| `required`                     | Some source must set this field                               |
-
-On the struct: `#[configulator(crate = "path")]` if you renamed the crate, and `#[configulator(allow_unknown_fields)]` to allow unknown keys in config files.
-
-### Example
+## Getting started
 
 ```rust
 use configulator::{
-    CLIFlagOptions, Config, Configulator, ConfigulatorError,
-    EnvironmentVariableOptions, FileOptions, Validate,
-    serde_loader,
+    CLIFlagOptions, Config, Configulator, ConfigulatorError, EnvironmentVariableOptions,
+    FileOptions, Validate, serde_loader,
 };
 
 #[derive(Config, Debug)]
 struct AppConfig {
-    #[configulator(name = "host", default = "127.0.0.1", description = "Bind address")]
-    host: String,
+    #[configulator(name = "log-level", default = "info", description = "log level")]
+    log_level: String,
 
-    #[configulator(name = "port", default = "8080", description = "Listen port")]
-    port: u16,
-
-    #[configulator(name = "database", nested)]
-    database: DatabaseConfig,
+    #[configulator(name = "http", nested)]
+    http: Http,
 }
 
 #[derive(Config, Debug)]
-struct DatabaseConfig {
-    #[configulator(name = "url", default = "postgres://localhost/mydb")]
-    url: String,
+struct Http {
+    #[configulator(name = "host", default = "localhost", description = "listen address")]
+    host: String,
+
+    #[configulator(name = "port", default = "8080", description = "listen port")]
+    port: u16,
 }
 
 impl Validate for AppConfig {
     fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if self.port == 0 {
-            return Err("port must be non-zero".into());
-        }
         Ok(())
     }
 }
@@ -100,117 +53,158 @@ impl Validate for AppConfig {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = Configulator::<AppConfig>::new()
         .with_file(FileOptions {
-            paths: vec!["config.yaml".into(), "/etc/myapp/config.yaml".into()],
+            paths: vec!["config.yaml".into()],
             ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
         })
-        // MYAPP__HOST, MYAPP__DATABASE__URL, ...
         .with_environment_variables(EnvironmentVariableOptions {
-            prefix: "MYAPP__".into(),
-            separator: "__".into(),
+            prefix: "MYAPP_".into(),
+            separator: "_".into(),
         })
-        // --host, --database.url, --config/-c, ...
         .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-        .load_with_report();
+        .load();
 
-    // --help, --version, and bad args come back as a clap::Error
-    let (config, report) = match result {
-        Ok(ok) => ok,
+    let config = match result {
+        Ok(config) => config,
         Err(ConfigulatorError::CLIError(e)) => e.exit(),
         Err(e) => return Err(e.into()),
     };
-
-    println!("host: {}", config.host);
-    for path in report.paths() {
-        let o = report.origin(path).unwrap();
-        println!("{path} came from {} ({})", o.layer, o.detail);
-    }
+    println!("{} {}:{}", config.log_level, config.http.host, config.http.port);
     Ok(())
 }
 ```
 
-See [`examples/`](configulator/examples/) for more, including custom `FromStr` types.
+Now `http.port` can be set with `http: {port: 9000}` in `config.yaml`,
+`MYAPP_HTTP_PORT=9000`, or `--http.port 9000`, and `--config` picks a
+different file. `--help`, `--version` and bad flags come back as
+`ConfigulatorError::CLIError`, and `e.exit()` prints them the way clap does.
 
-### Configuration Sources
+More in [configulator/examples](configulator/examples): [basic](configulator/examples/basic.rs)
+and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 
-#### Config Files
+## Features
 
-Pass any serde-compatible deserializer via `serde_loader`, or implement the `FileLoader` trait yourself.
+- Configuration from, lowest to highest priority:
+  - Defaults in `#[configulator(default = "...")]`
+  - Files, in any serde format: pass the format's `from_str` to
+    `serde_loader`, or implement `FileLoader`
+  - Environment variables
+  - Command-line flags, using clap
+- Supported types:
+  - Every scalar, `String`, `PathBuf`, and anything else that implements
+    `FromStr`. File values go through `FromStr` too, so your types don't need
+    `Deserialize`
+  - Nested structs, and `Option<T>` of a scalar or struct for optional values
+  - `Vec<T>` of scalars
+  - `Vec` and `HashMap`/`BTreeMap` of structs, and maps of scalars (files
+    only)
+  - `configulator::Duration` for Go-style durations (`30s`, `1h30m`)
+- `load_with_report()` returns a `Report` of where each field's value came
+  from: its default, the config file, an environment variable or a flag,
+  naming which one
+- `secret` fields are redacted in `print_config()` output and in error
+  messages
+- `required` fields make loading fail if nothing sets them
+- Unknown keys in config files are an error unless the struct has
+  `#[configulator(allow_unknown_fields)]`
+- [configulator-cli](configulator-cli) prints a JSON Schema, a sample config
+  file (YAML, JSON or TOML), or a Markdown table of every option
 
-Provide a list of paths to search. The first file found is used.
+## Attributes
 
-```rust
-// YAML
-.with_file(FileOptions {
-    paths: vec!["config.yaml".into()],
-    ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
-})
+| Attribute | Meaning |
+| --- | --- |
+| `name = "key"` | Key in files, env and flags. Defaults to the field name |
+| `default = "value"` | Default value, parsed with `FromStr` |
+| `description = "text"` | Flag help text, and the description in generated docs |
+| `nested` | The field (or its `Vec`/map element, or `Option` inner type) is a struct that derives `Config` |
+| `env = "NAME"` | Use `NAME` for this field's part of the env var name. `env = "-"` skips env |
+| `flag = "name"` | Use `name` for this field's part of the flag name. `flag = "-"` skips flags |
+| `short = 'p'` | Flag shorthand |
+| `secret` | Redact in `print_config()` and error messages |
+| `required` | Loading fails if nothing sets it |
 
-// TOML
-.with_file(FileOptions {
-    paths: vec!["config.toml".into()],
-    ..FileOptions::new(serde_loader(|s| toml::from_str(s)))
-})
+On the struct: `#[configulator(allow_unknown_fields)]`, and
+`#[configulator(crate = "path")]` if you renamed the crate.
+
+Env var names are the prefix plus each level's name, uppercased, with `-`
+turned into `_`, joined by the separator. The prefix is used as-is, so
+include its trailing separator: with prefix `MYAPP_` and separator `_`,
+`http.listen-port` is `MYAPP_HTTP_LISTEN_PORT`.
+
+## Cargo features
+
+All on by default except `testing`.
+
+| Feature | Meaning |
+| --- | --- |
+| `file` | Config files (`FileOptions`, `serde_loader`, the `--config` flag) |
+| `env` | Environment variables |
+| `cli` | Command-line flags, using clap |
+| `testing` | `with_cli_args()` and `with_env_vars()` for tests |
+
+## configulator-cli
+
+```sh
+cargo install configulator-cli --locked
 ```
 
-The CLI also accepts `--config` / `-c` to specify a config file path at runtime (requires `.with_file()`).
-If that file doesn't exist or can't be parsed, loading fails instead of falling back to the search paths. `FileOptions::explicit` works the same way.
+It reads your crate's source, so it doesn't need to build your app. Install
+the version that matches your configulator-rs.
 
-Unknown keys in config files are an error unless the struct has `allow_unknown_fields`.
+| Flag | Meaning |
+| --- | --- |
+| `--type` | Config type (required) |
+| `--dir` | Directory to scan for the type, default `.` |
+| `--schema` | Print a JSON Schema |
+| `--sample` | Print a sample config. `--format` picks `yaml` (default), `json` or `toml` |
+| `--markdown` | Print a Markdown table of every option. `--env-prefix`, `--env-separator` and `--flag-separator` set how names are shown |
+| `--sample-file` | With `--sample`, write the sample to a file, such as `config.example.yaml` |
+| `--markdown-file` | With `--markdown`, write the table into a file between the configulator markers |
+| `--check` | With `--sample-file` or `--markdown-file`, exit 1 if the file is out of date instead of writing it |
 
-#### Environment Variables
+## Generated config docs
 
-Environment variables are `prefix` + each config name in the path (uppercased, dashes become underscores) joined by `separator`.
-The prefix is used as-is, so include the trailing separator, and it must be uppercase.
+Keep a `config.example.yaml` and a table of every option in your README up
+to date with the CLI.
 
-```rust
-.with_environment_variables(EnvironmentVariableOptions {
-    prefix: "MYAPP__".into(),
-    separator: "__".into(),
-})
+For the table, put the markers where it should go:
+
+```markdown
+## Configuration
+
+<!-- configulator:begin -->
+<!-- configulator:end -->
 ```
 
-For example, a field named `max-connections` under a `database` parent would be `MYAPP__DATABASE__MAX_CONNECTIONS`.
+Then run the CLI by hand, from pre-commit, or from CI:
 
-#### CLI Flags
-
-Nested fields use the separator to form flag names (e.g. `--database.host`).
-
-```rust
-.with_cli_flags(CLIFlagOptions {
-    separator: ".".into(),
-})
+```sh
+configulator --type AppConfig --sample --sample-file config.example.yaml
+configulator --type AppConfig --markdown --markdown-file README.md --env-prefix MYAPP_ --env-separator _
 ```
 
-List fields can be repeated (`--ports 80 --ports 443`). Collections of structs and maps are file only.
-
-You can also provide a custom `clap::Command` to set the app name, version, or add your own flags:
-
-```rust
-.with_cli_command(clap::Command::new("myapp").version("1.0"))
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/USA-RedDragon/configulator-rs
+    rev: v0.2.2
+    hooks:
+      - id: configulator-sample
+        args: [--type, AppConfig, --sample-file, config.example.yaml]
+      - id: configulator-markdown
+        args: [--type, AppConfig, --markdown-file, README.md, --env-prefix, MYAPP_, --env-separator, _]
 ```
 
-### Validation
-
-Implement the `Validate` trait and call `.load()` or `.load_with_report()` to validate after loading. Use `.load_without_validation()` to skip validation.
-
-### Schema and Sample Config
-
-[`configulator-cli`](configulator-cli/) prints a JSON Schema, sample config, or Markdown table of options for your config struct.
-
-### Feature Flags
-
-All features are enabled by default except `testing`.
-
-| Feature   | Description                                                          | Dependencies |
-|-----------|----------------------------------------------------------------------|--------------|
-| `file`    | Config file loading (`FileOptions`, `serde_loader`, `--config` flag) | `serde`      |
-| `cli`     | CLI flag parsing via clap                                            | `clap`       |
-| `env`     | Environment variable loading                                         | -            |
-| `testing` | `with_cli_args()` / `with_env_vars()` for tests                      | `clap`       |
-
-To opt out of features you don't need:
-
-```toml
-[dependencies]
-configulator-rs = { version = "0.2", default-features = false, features = ["env"] }
+```yaml
+# GitHub Actions: fails pull requests when either file is stale and commits
+# the update on pushes to the default branch. Needs contents: write.
+- uses: USA-RedDragon/reusable-actions/configulator-rs-docs@v2
+  with:
+    type: AppConfig
+    env-prefix: MYAPP_
+    env-separator: _
 ```
+
+The pre-commit hooks run the `configulator` on your `PATH`. The action
+installs the configulator-cli version that matches configulator-rs in your
+`Cargo.lock`.
