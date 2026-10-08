@@ -364,8 +364,8 @@ fn markdown_fields(
             d
         };
         let default_cell = |f: &FieldInfo| match f.default_value {
-            Some(d) => format!("`{d}`"),
-            None => String::new(),
+            Some(d) if !d.is_empty() => format!("`{d}`"),
+            _ => String::new(),
         };
         match &f.field_type {
             FieldType::Struct(sub) => {
