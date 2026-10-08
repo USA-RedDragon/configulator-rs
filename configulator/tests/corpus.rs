@@ -170,6 +170,55 @@ struct Complex {
     zs: Vec<configulator::Complex128>,
 }
 
+#[derive(Config, Debug)]
+struct Required {
+    #[configulator(name = "top", required)]
+    top: String,
+    #[configulator(name = "nested", nested)]
+    nested: RNested,
+    #[configulator(name = "opt", nested)]
+    opt: Option<ROpt>,
+    #[configulator(name = "items", nested)]
+    items: Vec<ROpt>,
+}
+
+#[derive(Config, Debug)]
+struct RNested {
+    #[configulator(name = "leaf", required)]
+    leaf: String,
+}
+
+#[derive(Config, Debug)]
+struct ROpt {
+    #[configulator(name = "leaf", required)]
+    leaf: String,
+    #[configulator(name = "other")]
+    other: String,
+}
+
+impl Validate for Required {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.top == "invalid" {
+            return Err("top is invalid".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Config, Debug)]
+struct Attributes {
+    #[configulator(name = "token", secret)]
+    token: i64,
+    #[configulator(name = "renamed", env = "RN", flag = "rn")]
+    renamed: String,
+    #[configulator(name = "no-env", env = "-")]
+    no_env: String,
+    #[configulator(name = "no-flag", flag = "-")]
+    no_flag: String,
+    #[configulator(name = "port", short = 'p')]
+    port: u16,
+}
+
 macro_rules! ok_validate {
     ($($t:ty),*) => {
         $(impl Validate for $t {
@@ -186,7 +235,8 @@ ok_validate!(
     Optionals,
     Durations,
     NestedCollections,
-    Complex
+    Complex,
+    Attributes
 );
 
 trait ToJson {
@@ -278,6 +328,30 @@ impl ToJson for NestedCollections {
     }
 }
 
+impl ToJson for Required {
+    fn to_json(&self) -> Value {
+        let ropt = |r: &ROpt| json!({"leaf": r.leaf, "other": r.other});
+        json!({
+            "top": self.top,
+            "nested": {"leaf": self.nested.leaf},
+            "opt": self.opt.as_ref().map(ropt),
+            "items": self.items.iter().map(ropt).collect::<Vec<_>>(),
+        })
+    }
+}
+
+impl ToJson for Attributes {
+    fn to_json(&self) -> Value {
+        json!({
+            "token": self.token,
+            "renamed": self.renamed,
+            "no-env": self.no_env,
+            "no-flag": self.no_flag,
+            "port": self.port,
+        })
+    }
+}
+
 fn complex_json(re: f64, im: f64) -> Value {
     let num = |v: f64| {
         if v.fract() == 0.0 && v.abs() < 1e15 {
@@ -316,8 +390,16 @@ fn read_json(path: &Path) -> Option<Value> {
     Some(serde_json::from_str(&data).expect("invalid JSON fixture"))
 }
 
+struct CaseOptions {
+    prefix: String,
+    env_separator: String,
+    flag_separator: String,
+    array_separator: String,
+}
+
 struct Case {
     name: String,
+    options: CaseOptions,
     dir: PathBuf,
     shape: String,
     env: HashMap<String, String>,
@@ -332,6 +414,20 @@ fn load_case(dir: &Path) -> Case {
         .unwrap_or_else(|_| panic!("{}: missing shape file", dir.display()))
         .trim()
         .to_string();
+    let options = read_json(&dir.join("options.json")).unwrap_or_else(|| json!({}));
+    let opt = |key: &str, default: &str| {
+        options
+            .get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or(default)
+            .to_string()
+    };
+    let options = CaseOptions {
+        prefix: opt("prefix", "APP_"),
+        env_separator: opt("env_separator", "_"),
+        flag_separator: opt("flag_separator", "."),
+        array_separator: opt("array_separator", ","),
+    };
     let env = read_json(&dir.join("env.json"))
         .map(|v| {
             v.as_object()
@@ -352,6 +448,7 @@ fn load_case(dir: &Path) -> Case {
         .unwrap_or_default();
     Case {
         name: dir.file_name().unwrap().to_string_lossy().to_string(),
+        options,
         dir: dir.to_path_buf(),
         shape,
         env,
@@ -362,20 +459,36 @@ fn load_case(dir: &Path) -> Case {
     }
 }
 
+fn json_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| json_eq(a, b))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| json_eq(v, w)))
+        }
+        _ => a == b,
+    }
+}
+
 fn error_kind(err: &ConfigulatorError) -> &'static str {
     match err {
         ConfigulatorError::ExplicitFileError { .. } => "ExplicitFileMissing",
         ConfigulatorError::ParseError { .. } => "ParseError",
         ConfigulatorError::BadEnvOptions { .. } => "BadEnvOptions",
         ConfigulatorError::ValidationError(_) => "ValidationError",
-        ConfigulatorError::Required { .. } => "Required",
+        ConfigulatorError::Required { .. } => "RequiredError",
         ConfigulatorError::SearchPathUnreadable { .. } => "SearchPathUnreadable",
         ConfigulatorError::FileNotFound { .. } => "NoFileFound",
+        ConfigulatorError::CLIError(_) => "FlagError",
         ConfigulatorError::DecodeError { message, .. } => {
             if message.contains("unknown field") {
                 "UnknownKey"
             } else {
-                "ParseError"
+                "DecodeError"
             }
         }
         _ => "Other",
@@ -393,13 +506,14 @@ where
             ..FileOptions::new(serde_loader(|s| serde_json::from_str(s)))
         })
         .with_environment_variables(EnvironmentVariableOptions {
-            prefix: "APP_".into(),
-            separator: "_".into(),
+            prefix: case.options.prefix.clone(),
+            separator: case.options.env_separator.clone(),
         })
         .with_env_vars(case.env.clone())
         .with_cli_flags(CLIFlagOptions {
-            separator: ".".into(),
+            separator: case.options.flag_separator.clone(),
         })
+        .with_array_separator(case.options.array_separator.clone())
         .with_cli_args(case.argv.clone())
         .load_with_report()
 }
@@ -419,7 +533,7 @@ where
                 .as_ref()
                 .ok_or("case has neither expect.json nor expect_errors.json")?;
             let got = config.to_json();
-            if &got != expect {
+            if !json_eq(&got, expect) {
                 return Err(format!("value mismatch\n  want: {expect}\n  got:  {got}"));
             }
             if let Some(origins) = &case.expect_origins {
@@ -440,7 +554,12 @@ where
                         ));
                     }
                     if let Some(detail) = want.get("detail").and_then(|d| d.as_str()) {
-                        if origin.detail != detail {
+                        let matches = if origin.layer == Layer::File {
+                            origin.detail.ends_with(detail)
+                        } else {
+                            origin.detail == detail
+                        };
+                        if !matches {
                             return Err(format!(
                                 "origin detail mismatch for {path}: want {detail:?}, got {:?}",
                                 origin.detail
@@ -469,6 +588,14 @@ where
                     let needle = needle.as_str().unwrap();
                     if !msg.contains(needle) {
                         return Err(format!("error {msg:?} does not contain {needle:?}"));
+                    }
+                }
+            }
+            if let Some(excludes) = expect_errors.get("excludes").and_then(|c| c.as_array()) {
+                for needle in excludes {
+                    let needle = needle.as_str().unwrap();
+                    if msg.contains(needle) {
+                        return Err(format!("error {msg:?} contains excluded {needle:?}"));
                     }
                 }
             }
@@ -522,6 +649,8 @@ fn corpus() {
             "durations" => check_case::<Durations>(&case),
             "nested-collections" => check_case::<NestedCollections>(&case),
             "complex" => check_case::<Complex>(&case),
+            "required" => check_case::<Required>(&case),
+            "attributes" => check_case::<Attributes>(&case),
             other => Err(format!("unknown shape {other:?}")),
         };
         ran += 1;
