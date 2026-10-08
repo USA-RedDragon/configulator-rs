@@ -677,11 +677,11 @@ fn emit_has_shadow(
             fn build(
                 sh: Self::Shadow,
                 prefix: &str,
-                array_sep: &str,
+                ctx: &#cr::__private::BuildCtx,
                 report: &mut #cr::Report,
             ) -> ::std::result::Result<Self, #cr::ConfigulatorError> {
                 #[allow(unused_variables)]
-                let (prefix, array_sep) = (prefix, array_sep);
+                let (prefix, array_sep) = (prefix, ctx.array_sep.as_str());
                 ::std::result::Result::Ok(#build_body)
             }
 
@@ -831,10 +831,15 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
         let ident = &m.ident;
         let config_name = &m.config_name;
         let secret = m.attrs.secret;
-        let missing = quote! {
-            return ::std::result::Result::Err(#cr::ConfigulatorError::Required {
-                path: #cr::__private::join(prefix, #config_name),
-            })
+        let missing = |fallback: TokenStream2| {
+            quote! {{
+                if ctx.check_required {
+                    return ::std::result::Result::Err(#cr::ConfigulatorError::Required {
+                        path: #cr::__private::join(prefix, #config_name),
+                    });
+                }
+                #fallback
+            }}
         };
         let required = m.attrs.required && m.attrs.default.is_none();
         let init = match &m.shape {
@@ -857,7 +862,10 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                             #cr::__private::parse_leaf::<#ty>(#default, #config_name, #secret)?,
                         )
                     }},
-                    (None, _) if required => missing.clone(),
+                    (None, false) if required => {
+                        missing(quote!(<#ty as ::std::default::Default>::default()))
+                    }
+                    (None, true) if required => missing(quote!(::std::option::Option::None)),
                     (None, false) => quote!(<#ty as ::std::default::Default>::default()),
                     (None, true) => quote!(::std::option::Option::None),
                 };
@@ -883,7 +891,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                             .map(|x| #cr::__private::parse_leaf::<#elem>(x, #config_name, #secret))
                             .collect::<::std::result::Result<_, _>>()?
                     }},
-                    None if required => missing.clone(),
+                    None if required => missing(quote!(::std::vec::Vec::new())),
                     None => quote!(::std::vec::Vec::new()),
                 };
                 quote! {
@@ -898,7 +906,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
             Shape::MapLeaf { kind, .. } => {
                 let map = map_type(kind);
                 let none_arm = if required {
-                    missing.clone()
+                    missing(quote!(#map::new()))
                 } else {
                     quote!(#map::new())
                 };
@@ -921,7 +929,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                         }
                     },
                     &#cr::__private::join(prefix, #config_name),
-                    array_sep,
+                    ctx,
                     report,
                 )?
             },
@@ -931,7 +939,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                         <#ty as #cr::HasShadow>::build(
                             x,
                             &#cr::__private::join(prefix, #config_name),
-                            array_sep,
+                            ctx,
                             report,
                         )?,
                     ),
@@ -947,7 +955,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                             out.push(<#elem as #cr::HasShadow>::build(
                                 e,
                                 &format!("{p}[{i}]"),
-                                array_sep,
+                                ctx,
                                 report,
                             )?);
                         }
@@ -970,7 +978,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                                 );
                                 out.insert(
                                     k,
-                                    <#val as #cr::HasShadow>::build(e, &kp, array_sep, report)?,
+                                    <#val as #cr::HasShadow>::build(e, &kp, ctx, report)?,
                                 );
                             }
                             out

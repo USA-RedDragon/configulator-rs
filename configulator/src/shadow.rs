@@ -33,7 +33,7 @@ pub trait HasShadow: Sized {
     fn build(
         sh: Self::Shadow,
         prefix: &str,
-        array_sep: &str,
+        ctx: &__private::BuildCtx,
         report: &mut Report,
     ) -> Result<Self, ConfigulatorError>;
 
@@ -86,6 +86,14 @@ pub mod __private {
 
     #[cfg(feature = "file")]
     pub use serde;
+
+    /// Settings for [`HasShadow::build`].
+    pub struct BuildCtx {
+        /// Separator for list defaults.
+        pub array_sep: String,
+        /// Fail on unset `required` fields.
+        pub check_required: bool,
+    }
 
     /// `print_config` value wrapper. `(&PrintVal(&v)).print_val()` uses
     /// `Debug` when `v` has it and falls back to a placeholder otherwise,

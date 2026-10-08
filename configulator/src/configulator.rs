@@ -254,7 +254,11 @@ impl<C: HasShadow> Configulator<C> {
             );
         }
 
-        let config = C::build(acc, "", &self.array_separator, &mut report)?;
+        let ctx = crate::shadow::__private::BuildCtx {
+            array_sep: self.array_separator.clone(),
+            check_required: true,
+        };
+        let config = C::build(acc, "", &ctx, &mut report)?;
         check_required(&C::fields(), "", &report)?;
         Ok((config, report))
     }
@@ -275,24 +279,16 @@ impl<C: HasShadow> Configulator<C> {
         crate::schema::sample_config(&C::fields())
     }
 
-    /// Get the default config (all defaults applied, no other sources).
-    ///
-    /// Validation is not performed. Call
-    /// [`Validate::validate`](crate::Validate::validate) on the result if
-    /// needed.
+    /// The config with only defaults applied, using this builder's array
+    /// separator. Neither `required` nor [`Validate`] is checked, like Go's
+    /// `Default()`.
+    pub fn defaults(&self) -> Result<C, ConfigulatorError> {
+        defaults_with::<C>(&self.array_separator)
+    }
+
+    /// [`defaults`](Self::defaults) with the default `,` array separator.
     pub fn defaults_only() -> Result<C, ConfigulatorError> {
-        let mut report = Report::default();
-        let mut acc = C::Shadow::default();
-        let defaults = C::shadow_defaults(",")?;
-        C::overlay(
-            &mut acc,
-            defaults,
-            "",
-            Layer::Default,
-            &|_| "default tag".to_string(),
-            &mut report,
-        );
-        C::build(acc, "", ",", &mut report)
+        defaults_with::<C>(",")
     }
 
     #[cfg(feature = "cli")]
@@ -467,4 +463,23 @@ fn check_required(
         }
     }
     Ok(())
+}
+
+fn defaults_with<C: HasShadow>(array_sep: &str) -> Result<C, ConfigulatorError> {
+    let mut report = Report::default();
+    let mut acc = C::Shadow::default();
+    let defaults = C::shadow_defaults(array_sep)?;
+    C::overlay(
+        &mut acc,
+        defaults,
+        "",
+        Layer::Default,
+        &|_| "default tag".to_string(),
+        &mut report,
+    );
+    let ctx = crate::shadow::__private::BuildCtx {
+        array_sep: array_sep.to_string(),
+        check_required: false,
+    };
+    C::build(acc, "", &ctx, &mut report)
 }

@@ -1898,3 +1898,24 @@ fn bools_accept_go_parsebool_spellings() {
         );
     }
 }
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct DefaultsConfig {
+    #[configulator(name = "count", required)]
+    count: u32,
+    #[configulator(name = "tags", default = "a;b")]
+    tags: Vec<String>,
+}
+
+#[test]
+fn defaults_skip_required_and_use_the_array_separator() {
+    let config = Configulator::<DefaultsConfig>::new()
+        .with_array_separator(";")
+        .defaults()
+        .unwrap();
+    assert_eq!(config.count, 0);
+    assert_eq!(config.tags, vec!["a", "b"]);
+    let config = Configulator::<DefaultsConfig>::defaults_only().unwrap();
+    assert_eq!(config.tags, vec!["a;b"]);
+}
