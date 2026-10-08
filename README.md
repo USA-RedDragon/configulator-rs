@@ -187,7 +187,7 @@ configulator --type AppConfig --markdown --markdown-file README.md --env-prefix 
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/USA-RedDragon/configulator-rs
-    rev: v0.2.2
+    rev: v0.2.3
     hooks:
       - id: configulator-sample
         args: [--type, AppConfig, --sample-file, config.example.yaml]
@@ -205,6 +205,6 @@ repos:
     env-separator: _
 ```
 
-The pre-commit hooks run the `configulator` on your `PATH`. The action
-installs the configulator-cli version that matches configulator-rs in your
-`Cargo.lock`.
+The pre-commit hooks and the action both run the configulator-cli version
+that matches configulator-rs in your `Cargo.lock`. The hooks install it into
+`~/.cache/configulator-cli` the first time.
