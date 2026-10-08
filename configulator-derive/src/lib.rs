@@ -1318,97 +1318,131 @@ fn emit_from_cli(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
     quote!(#(#parts)*)
 }
 
+fn go_leaf(cr: &syn::Path, ty: &Type, expr: TokenStream2) -> TokenStream2 {
+    let name = last_segment(ty).map(|seg| seg.ident.to_string());
+    match name.as_deref() {
+        Some("f64") => quote!(#cr::__private::go_float(*#expr as f64, false)),
+        Some("f32") => quote!(#cr::__private::go_float(*#expr as f64, true)),
+        Some("PathBuf") => quote!(#expr.display().to_string()),
+        _ => quote!((&&&#cr::__private::PrintVal(#expr)).print_val()),
+    }
+}
+
+fn go_value(cr: &syn::Path, m: &FieldModel, expr: TokenStream2) -> TokenStream2 {
+    if m.attrs.secret {
+        return quote!(::std::string::String::from("(redacted)"));
+    }
+    match &m.shape {
+        Shape::Bool { opt: false } => go_leaf(cr, &syn::parse_quote!(bool), expr),
+        Shape::Leaf { ty, opt: false } => go_leaf(cr, ty, expr),
+        Shape::Bool { opt: true } | Shape::Leaf { opt: true, .. } => {
+            let ty: Type = match &m.shape {
+                Shape::Leaf { ty, .. } => ty.clone(),
+                _ => syn::parse_quote!(bool),
+            };
+            let inner = go_leaf(cr, &ty, quote!(x));
+            quote! {
+                match #expr {
+                    ::std::option::Option::Some(x) => #inner,
+                    ::std::option::Option::None => ::std::string::String::from("<nil>"),
+                }
+            }
+        }
+        Shape::VecLeaf { elem } => {
+            let item = go_leaf(cr, elem, quote!(x));
+            quote!(#cr::__private::go_list(#expr.iter().map(|x| #item)))
+        }
+        Shape::MapLeaf { val, .. } => {
+            let item = go_leaf(cr, val, quote!(v));
+            quote! {
+                #cr::__private::go_map(#expr.iter().map(|(k, v)| {
+                    ((&&&#cr::__private::PrintVal(k)).print_val(), #item)
+                }))
+            }
+        }
+        Shape::Nested { opt: false, .. } => quote!(#expr.__go_value()),
+        Shape::Nested { opt: true, .. } => quote! {
+            match #expr {
+                ::std::option::Option::Some(x) => x.__go_value(),
+                ::std::option::Option::None => ::std::string::String::from("<nil>"),
+            }
+        },
+        Shape::VecNested { .. } => {
+            quote!(#cr::__private::go_list(#expr.iter().map(|x| x.__go_value())))
+        }
+        Shape::MapNested { .. } => quote! {
+            #cr::__private::go_map(#expr.iter().map(|(k, v)| {
+                ((&&&#cr::__private::PrintVal(k)).print_val(), v.__go_value())
+            }))
+        },
+    }
+}
+
 fn emit_print(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenStream2 {
-    let mut parts = Vec::new();
+    let mut lines = Vec::new();
+    let mut values = Vec::new();
     for m in model {
         let ident = &m.ident;
         let config_name = &m.config_name;
-        let part = if m.attrs.secret {
+        let value = go_value(cr, m, quote!((&self.#ident)));
+        values.push(value.clone());
+        let line = |v: TokenStream2| {
             quote! {
-                out.push_str(&format!(
-                    "{} = (redacted)\n",
+                out.push_str(&::std::format!(
+                    "{} = {}\n",
                     #cr::__private::join(prefix, #config_name),
+                    #v,
                 ));
             }
-        } else {
-            match &m.shape {
-                Shape::Bool { .. } | Shape::Leaf { .. } | Shape::VecLeaf { .. } => quote! {
-                    out.push_str(&format!(
-                        "{} = {}\n",
-                        #cr::__private::join(prefix, #config_name),
-                        (&#cr::__private::PrintVal(&self.#ident)).print_val(),
-                    ));
-                },
-                Shape::MapLeaf { .. } => quote! {
-                    {
-                        let p = #cr::__private::join(prefix, #config_name);
-                        let mut keys: ::std::vec::Vec<_> = self.#ident.keys().collect();
-                        keys.sort_by_key(|k| k.to_string());
-                        if keys.is_empty() {
-                            out.push_str(&format!("{p} = {{}}\n"));
-                        }
-                        for k in keys {
-                            out.push_str(&format!(
-                                "{p}.{} = {}\n",
-                                #cr::__private::quote_key(&k.to_string()),
-                                (&#cr::__private::PrintVal(&self.#ident[k])).print_val(),
-                            ));
-                        }
-                    }
-                },
-                Shape::Nested { opt: false, .. } => quote! {
-                    self.#ident.__print_into(
-                        &#cr::__private::join(prefix, #config_name),
-                        out,
-                    );
-                },
-                Shape::Nested { opt: true, .. } => quote! {
-                    {
-                        let p = #cr::__private::join(prefix, #config_name);
-                        match &self.#ident {
-                            ::std::option::Option::Some(x) => x.__print_into(&p, out),
-                            ::std::option::Option::None => {
-                                out.push_str(&format!("{p} = (unset)\n"));
-                            }
-                        }
-                    }
-                },
-                Shape::VecNested { .. } => quote! {
-                    {
-                        let p = #cr::__private::join(prefix, #config_name);
-                        if self.#ident.is_empty() {
-                            out.push_str(&format!("{p} = []\n"));
-                        }
-                        for (i, e) in self.#ident.iter().enumerate() {
-                            e.__print_into(&format!("{p}[{i}]"), out);
-                        }
-                    }
-                },
-                Shape::MapNested { .. } => quote! {
-                    {
-                        let p = #cr::__private::join(prefix, #config_name);
-                        let mut keys: ::std::vec::Vec<_> = self.#ident.keys().collect();
-                        keys.sort_by_key(|k| k.to_string());
-                        if keys.is_empty() {
-                            out.push_str(&format!("{p} = {{}}\n"));
-                        }
-                        for k in keys {
-                            self.#ident[k].__print_into(
-                                &format!("{p}.{}", #cr::__private::quote_key(&k.to_string())),
-                                out,
-                            );
-                        }
-                    }
-                },
-            }
         };
-        parts.push(part);
+        let part = match &m.shape {
+            Shape::Nested { opt: false, .. } if !m.attrs.secret => quote! {
+                self.#ident.__print_into(&#cr::__private::join(prefix, #config_name), out);
+            },
+            Shape::Nested { opt: true, .. } if !m.attrs.secret => {
+                let unset = line(quote!("<unset>"));
+                quote! {
+                    match &self.#ident {
+                        ::std::option::Option::Some(x) => {
+                            x.__print_into(&#cr::__private::join(prefix, #config_name), out)
+                        }
+                        ::std::option::Option::None => { #unset }
+                    }
+                }
+            }
+            Shape::Bool { opt: true } | Shape::Leaf { opt: true, .. } if !m.attrs.secret => {
+                let ty: Type = match &m.shape {
+                    Shape::Leaf { ty, .. } => ty.clone(),
+                    _ => syn::parse_quote!(bool),
+                };
+                let inner = go_leaf(cr, &ty, quote!(x));
+                line(quote! {
+                    match &self.#ident {
+                        ::std::option::Option::Some(x) => #inner,
+                        ::std::option::Option::None => ::std::string::String::from("<unset>"),
+                    }
+                })
+            }
+            Shape::VecNested { elem: ty } | Shape::MapNested { val: ty, .. } if !m.attrs.secret => {
+                let redacted = line(quote!("(redacted)"));
+                let shown = line(value);
+                quote! {
+                    if #cr::__private::has_secret(&<#ty as #cr::HasShadow>::fields()) {
+                        #redacted
+                    } else {
+                        #shown
+                    }
+                }
+            }
+            _ => line(value),
+        };
+        lines.push(part);
     }
     quote! {
         #[automatically_derived]
         impl #name {
-            /// Render every field as `path = value` lines, redacting fields
-            /// marked `secret`.
+            /// Render every field as `path = value` lines, the way Go's
+            /// `PrintConfig` does, redacting fields marked `secret`.
             pub fn print_config(&self) -> ::std::string::String {
                 let mut out = ::std::string::String::new();
                 self.__print_into("", &mut out);
@@ -1418,8 +1452,16 @@ fn emit_print(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
             #[doc(hidden)]
             pub fn __print_into(&self, prefix: &str, out: &mut ::std::string::String) {
                 #[allow(unused_imports)]
-                use #cr::__private::{PrintDebug as _, PrintFallback as _};
-                #(#parts)*
+                use #cr::__private::{PrintDebug as _, PrintDisplay as _, PrintFallback as _};
+                #(#lines)*
+            }
+
+            #[doc(hidden)]
+            pub fn __go_value(&self) -> ::std::string::String {
+                #[allow(unused_imports)]
+                use #cr::__private::{PrintDebug as _, PrintDisplay as _, PrintFallback as _};
+                let parts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#values),*];
+                ::std::format!("{{{}}}", parts.join(" "))
             }
         }
     }

@@ -283,7 +283,7 @@ fn parse_hex(s: &str) -> f64 {
 }
 
 /// Format like Go's `strconv.FormatFloat(v, 'g', -1, bits)`.
-fn format_g(v: f64, digits: u32) -> String {
+pub(crate) fn format_g(v: f64, digits: u32) -> String {
     if v.is_nan() {
         return "NaN".into();
     }

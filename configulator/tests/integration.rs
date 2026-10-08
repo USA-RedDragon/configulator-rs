@@ -1044,17 +1044,10 @@ fn print_config_nested_and_collections() {
         .with_file(yaml_opts(f.path()))
         .load()
         .unwrap();
-    let printed = config.print_config();
-    assert!(
-        printed.contains("labels.team = \"infra\""),
-        "got: {printed}"
+    assert_eq!(
+        config.print_config(),
+        "labels = map[team:infra]\nservers = [{a:1 1}]\npools = map[]\n"
     );
-    assert!(
-        printed.contains("servers[0].addr = \"a:1\""),
-        "got: {printed}"
-    );
-    assert!(printed.contains("servers[0].weight = 1"), "got: {printed}");
-    assert!(printed.contains("pools = {}"), "got: {printed}");
 }
 
 #[test]
@@ -1918,4 +1911,160 @@ fn defaults_skip_required_and_use_the_array_separator() {
     assert_eq!(config.tags, vec!["a", "b"]);
     let config = Configulator::<DefaultsConfig>::defaults_only().unwrap();
     assert_eq!(config.tags, vec!["a;b"]);
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct PrintHttp {
+    #[configulator(name = "host", default = "localhost")]
+    host: String,
+    #[configulator(name = "listen-port", default = "8080")]
+    listen_port: u16,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct PrintTls {
+    #[configulator(name = "cert")]
+    cert: String,
+    #[configulator(name = "min-version", default = "12")]
+    min_version: u16,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct PrintServer {
+    #[configulator(name = "addr")]
+    addr: String,
+    #[configulator(name = "weight", default = "1")]
+    weight: u16,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct PrintPool {
+    #[configulator(name = "name")]
+    name: String,
+    #[configulator(name = "size", default = "2")]
+    size: u16,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct PrintAll {
+    #[configulator(name = "log-level", default = "info")]
+    log_level: String,
+    #[configulator(name = "token", secret, default = "t")]
+    token: String,
+    #[configulator(name = "tags", default = "a,b")]
+    tags: Vec<String>,
+    #[configulator(name = "ports", default = "80,443")]
+    ports: Vec<u16>,
+    #[configulator(name = "ratio", default = "1e6")]
+    ratio: f64,
+    #[configulator(name = "count", default = "3")]
+    count: i64,
+    #[configulator(name = "big", default = "1000000")]
+    big: i64,
+    #[configulator(name = "on", default = "true")]
+    on: bool,
+    #[configulator(name = "timeout", default = "30s")]
+    timeout: Duration,
+    #[configulator(name = "port")]
+    port: Option<u16>,
+    #[configulator(name = "name")]
+    name: Option<String>,
+    #[configulator(name = "http", nested)]
+    http: PrintHttp,
+    #[configulator(name = "tls", nested)]
+    tls: Option<PrintTls>,
+    #[configulator(name = "labels")]
+    labels: HashMap<String, String>,
+    #[configulator(name = "servers", nested)]
+    servers: Vec<PrintServer>,
+    #[configulator(name = "pools", nested)]
+    pools: HashMap<String, PrintPool>,
+    #[configulator(name = "no-env", env = "-")]
+    no_env: String,
+    #[configulator(name = "no-flag", flag = "-")]
+    no_flag: String,
+    #[configulator(name = "renamed", env = "OTHER")]
+    renamed: String,
+}
+
+impl Validate for PrintAll {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn print_config_matches_go() {
+    let f = yaml_file(
+        "port: 9\nname: x\ntls:\n  cert: c\nlabels:\n  b: y\n  a: x\nservers:\n  - addr: \"h:1\"\npools:\n  p:\n    name: q\n",
+    );
+    let config = Configulator::<PrintAll>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    let want = "log-level = info
+token = (redacted)
+tags = [a b]
+ports = [80 443]
+ratio = 1e+06
+count = 3
+big = 1000000
+on = true
+timeout = 30s
+port = 9
+name = x
+http.host = localhost
+http.listen-port = 8080
+tls.cert = c
+tls.min-version = 12
+labels = map[a:x b:y]
+servers = [{h:1 1}]
+pools = map[p:{q 2}]
+no-env = 
+no-flag = 
+renamed = 
+";
+    assert_eq!(config.print_config(), want);
+
+    let config = Configulator::<PrintAll>::new().load().unwrap();
+    let out = config.print_config();
+    assert!(out.contains("\nport = <unset>\n"), "{out}");
+    assert!(out.contains("\ntls = <unset>\n"), "{out}");
+    assert!(out.contains("\nservers = []\n"), "{out}");
+    assert!(out.contains("\npools = map[]\n"), "{out}");
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct SecretElem {
+    #[configulator(name = "key", secret)]
+    key: String,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct SecretCollections {
+    #[configulator(name = "items", nested)]
+    items: Vec<SecretElem>,
+}
+
+impl Validate for SecretCollections {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn print_config_redacts_collections_holding_secrets() {
+    let f = yaml_file("items:\n  - key: hunter2\n");
+    let config = Configulator::<SecretCollections>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(config.print_config(), "items = (redacted)\n");
 }

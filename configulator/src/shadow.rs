@@ -95,16 +95,26 @@ pub mod __private {
         pub check_required: bool,
     }
 
-    /// `print_config` value wrapper. `(&PrintVal(&v)).print_val()` uses
-    /// `Debug` when `v` has it and falls back to a placeholder otherwise,
-    /// so field types aren't required to implement `Debug`.
-    pub struct PrintVal<'a, T>(pub &'a T);
+    /// `print_config` value wrapper. `(&&&PrintVal(&v)).print_val()` uses
+    /// `Display` when `v` has it, then `Debug`, then a placeholder, so field
+    /// types need neither.
+    pub struct PrintVal<'a, T: ?Sized>(pub &'a T);
+
+    pub trait PrintDisplay {
+        fn print_val(&self) -> String;
+    }
+
+    impl<T: fmt::Display + ?Sized> PrintDisplay for &&PrintVal<'_, T> {
+        fn print_val(&self) -> String {
+            self.0.to_string()
+        }
+    }
 
     pub trait PrintDebug {
         fn print_val(&self) -> String;
     }
 
-    impl<T: fmt::Debug> PrintDebug for PrintVal<'_, T> {
+    impl<T: fmt::Debug + ?Sized> PrintDebug for &PrintVal<'_, T> {
         fn print_val(&self) -> String {
             format!("{:?}", self.0)
         }
@@ -114,10 +124,45 @@ pub mod __private {
         fn print_val(&self) -> String;
     }
 
-    impl<T> PrintFallback for &PrintVal<'_, T> {
+    impl<T: ?Sized> PrintFallback for PrintVal<'_, T> {
         fn print_val(&self) -> String {
             "(no Debug impl)".to_string()
         }
+    }
+
+    /// A float as Go's `%v` prints it.
+    pub fn go_float(v: f64, is_f32: bool) -> String {
+        crate::complex::format_g(v, if is_f32 { 9 } else { 17 })
+    }
+
+    /// A Go `%v` list: `[a b]`.
+    pub fn go_list(items: impl IntoIterator<Item = String>) -> String {
+        format!("[{}]", items.into_iter().collect::<Vec<_>>().join(" "))
+    }
+
+    /// A Go `%v` map with keys sorted: `map[a:x b:y]`.
+    pub fn go_map(entries: impl IntoIterator<Item = (String, String)>) -> String {
+        let mut entries: Vec<_> = entries.into_iter().collect();
+        entries.sort();
+        let body: Vec<String> = entries
+            .into_iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect();
+        format!("map[{}]", body.join(" "))
+    }
+
+    /// True if any field in the tree is `secret`.
+    pub fn has_secret(fields: &[crate::field_info::FieldInfo]) -> bool {
+        use crate::field_info::FieldType;
+        fields.iter().any(|f| {
+            f.secret
+                || match &f.field_type {
+                    FieldType::Struct(sub)
+                    | FieldType::StructList(sub)
+                    | FieldType::StructMap(sub) => has_secret(sub),
+                    _ => false,
+                }
+        })
     }
 
     #[cfg(feature = "cli")]
