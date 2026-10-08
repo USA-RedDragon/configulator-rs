@@ -13,8 +13,7 @@ pub(crate) fn build_command(
 ) -> Result<clap::Command, ConfigulatorError> {
     let mut cmd = base
         .unwrap_or_else(|| clap::Command::new(default_name.to_string()))
-        .no_binary_name(true)
-        .disable_version_flag(true);
+        .no_binary_name(true);
 
     if let Some((name, short)) = config_flag {
         check_free(&cmd, &name, Some(short))?;
@@ -50,6 +49,14 @@ fn check_free(
         }
         if short == Some('h') {
             return Err(ConfigulatorError::FlagConflict("-h".into()));
+        }
+    }
+    if cmd.get_version().is_some() && !cmd.is_disable_version_flag_set() {
+        if long == "version" {
+            return Err(ConfigulatorError::FlagConflict("--version".into()));
+        }
+        if short == Some('V') {
+            return Err(ConfigulatorError::FlagConflict("-V".into()));
         }
     }
     Ok(())

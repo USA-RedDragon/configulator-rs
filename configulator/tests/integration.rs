@@ -805,6 +805,77 @@ fn cli_custom_command() {
 }
 
 #[test]
+fn cli_custom_command_version() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_command(clap::Command::new("myapp").version("1.0"))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--version"]))
+        .load()
+        .unwrap_err();
+    let ConfigulatorError::CLIError(e) = err else {
+        panic!("expected CLIError, got {err}");
+    };
+    assert_eq!(e.kind(), clap::error::ErrorKind::DisplayVersion);
+    assert_eq!(e.to_string(), "myapp 1.0\n");
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct VersionFieldConfig {
+    #[configulator(name = "version", default = "1")]
+    version: u32,
+    #[configulator(name = "verbose", short = 'V', flag = "-", default = "false")]
+    verbose: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct ShortVConfig {
+    #[configulator(name = "verbose", short = 'V', default = "false")]
+    verbose: bool,
+}
+
+#[test]
+fn version_flag_conflicts_only_when_the_command_has_a_version() {
+    let config = Configulator::<VersionFieldConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--version", "3"]))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.version, 3);
+
+    let err = Configulator::<VersionFieldConfig>::new()
+        .with_cli_command(clap::Command::new("myapp").version("1.0"))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&[]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "--version"),
+        "{err}"
+    );
+
+    let err = Configulator::<ShortVConfig>::new()
+        .with_cli_command(clap::Command::new("myapp").version("1.0"))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&[]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "-V"),
+        "{err}"
+    );
+}
+
+#[test]
 fn precedence_defaults_file_env_cli() {
     let f = yaml_file("host: from-file\nport: 1000\n");
     let (config, report) = Configulator::<SimpleConfig>::new()
