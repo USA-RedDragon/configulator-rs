@@ -1102,7 +1102,7 @@ fn schema_and_sample() {
         "key: \"(secret)\"",
         "# bind host",
         "host: \"localhost\"",
-        "tags: [a,b]",
+        "tags: [\"a\", \"b\"]",
     ] {
         assert!(sample.contains(want), "sample missing {want}:\n{sample}");
     }
@@ -1619,4 +1619,48 @@ fn markdown_flag_column_shows_shorthand() {
     assert!(md.contains("| `-p`, `--port` |"), "{md}");
     assert!(md.contains("| `--host` "), "{md}");
     assert!(!md.contains("`-x`"), "{md}");
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct ListDefaultsConfig {
+    #[configulator(name = "origins", default = "*,https://*")]
+    origins: Vec<String>,
+    #[configulator(name = "ports", default = "80,443")]
+    ports: Vec<u16>,
+    #[configulator(name = "waits", default = "1s,2m")]
+    waits: Vec<Duration>,
+}
+
+impl Validate for ListDefaultsConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn list_defaults_render_as_valid_yaml_and_typed_schema() {
+    let sample = Configulator::<ListDefaultsConfig>::sample_config();
+    assert!(
+        sample.contains(r#"origins: ["*", "https://*"]"#),
+        "{sample}"
+    );
+    assert!(sample.contains("ports: [80, 443]"), "{sample}");
+    assert!(sample.contains(r#"waits: ["1s", "2m"]"#), "{sample}");
+    let f = yaml_file(&sample);
+    let from_sample = Configulator::<ListDefaultsConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(
+        from_sample,
+        Configulator::<ListDefaultsConfig>::new().load().unwrap()
+    );
+
+    let schema = Configulator::<ListDefaultsConfig>::json_schema();
+    let schema = schema.split_whitespace().collect::<String>();
+    assert!(schema.contains(r#""default":[80,443]"#), "{schema}");
+    assert!(
+        schema.contains(r#""default":["*","https://*"]"#),
+        "{schema}"
+    );
 }

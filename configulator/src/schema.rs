@@ -177,9 +177,19 @@ fn schema_default(f: &FieldInfo, default: &str) -> Option<J> {
             ScalarHint::Integer => J::Raw(default.parse::<i128>().ok()?.to_string()),
             ScalarHint::Float => J::Raw(default.parse::<f64>().ok()?.to_string()),
         }),
-        FieldType::List => Some(J::Arr(
-            default.split(',').map(|p| J::Str(p.into())).collect(),
-        )),
+        FieldType::List => default
+            .split(',')
+            .map(|item| {
+                schema_default(
+                    &FieldInfo {
+                        field_type: FieldType::Scalar,
+                        ..f.clone()
+                    },
+                    item,
+                )
+            })
+            .collect::<Option<Vec<J>>>()
+            .map(J::Arr),
         _ => None,
     }
 }
@@ -287,7 +297,16 @@ fn sample_value(f: &FieldInfo) -> String {
     if let Some(default) = f.default_value {
         return match &f.field_type {
             FieldType::Scalar if f.scalar == ScalarHint::String => format!("{default:?}"),
-            FieldType::List => format!("[{default}]"),
+            FieldType::List => {
+                let items: Vec<String> = default
+                    .split(',')
+                    .map(|item| match f.scalar {
+                        ScalarHint::String => format!("{item:?}"),
+                        _ => item.to_string(),
+                    })
+                    .collect();
+                format!("[{}]", items.join(", "))
+            }
             _ => default.to_string(),
         };
     }

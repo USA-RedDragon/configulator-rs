@@ -633,7 +633,7 @@ struct SchemaSub {{
             "# key: \"(secret)\"",
             "# bind host",
             "host: \"localhost\"",
-            "tags: [a,b]",
+            "tags: [\"a\", \"b\"]",
         ] {
             assert!(sample.contains(want), "sample missing {want}:\n{sample}");
         }
