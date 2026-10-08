@@ -132,7 +132,11 @@ pub mod __private {
             } else {
                 s.to_string()
             },
-            message: e.to_string(),
+            message: if secret {
+                "invalid value".to_string()
+            } else {
+                e.to_string()
+            },
         })
     }
 
@@ -171,33 +175,105 @@ pub mod __private {
     pub struct Leaf<T>(pub T);
 
     #[cfg(feature = "file")]
-    struct ScalarVisitor<T>(std::marker::PhantomData<T>);
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        Int,
+        Float,
+        Bool,
+        Complex,
+        Text,
+    }
+
+    #[cfg(feature = "file")]
+    fn kind_of<T: 'static>() -> Kind {
+        use std::any::TypeId;
+        let t = TypeId::of::<T>();
+        let any = |ids: &[TypeId]| ids.contains(&t);
+        if any(&[
+            TypeId::of::<i8>(),
+            TypeId::of::<i16>(),
+            TypeId::of::<i32>(),
+            TypeId::of::<i64>(),
+            TypeId::of::<i128>(),
+            TypeId::of::<isize>(),
+            TypeId::of::<u8>(),
+            TypeId::of::<u16>(),
+            TypeId::of::<u32>(),
+            TypeId::of::<u64>(),
+            TypeId::of::<u128>(),
+            TypeId::of::<usize>(),
+        ]) {
+            Kind::Int
+        } else if any(&[TypeId::of::<f32>(), TypeId::of::<f64>()]) {
+            Kind::Float
+        } else if t == TypeId::of::<bool>() {
+            Kind::Bool
+        } else if any(&[
+            TypeId::of::<crate::Complex64>(),
+            TypeId::of::<crate::Complex128>(),
+        ]) {
+            Kind::Complex
+        } else {
+            Kind::Text
+        }
+    }
+
+    #[cfg(feature = "file")]
+    struct ScalarVisitor<T>(Kind, std::marker::PhantomData<T>);
+
+    #[cfg(feature = "file")]
+    impl<T: 'static> ScalarVisitor<T> {
+        fn new() -> Self {
+            ScalarVisitor(kind_of::<T>(), std::marker::PhantomData)
+        }
+    }
 
     #[cfg(feature = "file")]
     impl<'de, T> serde::de::Visitor<'de> for ScalarVisitor<T>
     where
-        T: FromStr,
+        T: FromStr + 'static,
         T::Err: fmt::Display,
     {
         type Value = Option<T>;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a scalar")
+            f.write_str(match self.0 {
+                Kind::Int => "an integer",
+                Kind::Float => "a number",
+                Kind::Bool => "a boolean",
+                Kind::Complex => "a number or a string",
+                Kind::Text => "a string",
+            })
         }
         fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            T::from_str(v).map(Some).map_err(serde::de::Error::custom)
+            if matches!(self.0, Kind::Int | Kind::Float | Kind::Bool) {
+                return Err(E::invalid_type(serde::de::Unexpected::Str(v), &self));
+            }
+            T::from_str(v).map(Some).map_err(E::custom)
         }
         fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
-            self.visit_str(&v.to_string())
+            if !matches!(self.0, Kind::Int | Kind::Float | Kind::Complex) {
+                return Err(E::invalid_type(serde::de::Unexpected::Signed(v), &self));
+            }
+            T::from_str(&v.to_string()).map(Some).map_err(E::custom)
         }
         fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
-            self.visit_str(&v.to_string())
+            if !matches!(self.0, Kind::Int | Kind::Float | Kind::Complex) {
+                return Err(E::invalid_type(serde::de::Unexpected::Unsigned(v), &self));
+            }
+            T::from_str(&v.to_string()).map(Some).map_err(E::custom)
         }
         fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
-            self.visit_str(&v.to_string())
+            if !matches!(self.0, Kind::Float | Kind::Complex) {
+                return Err(E::invalid_type(serde::de::Unexpected::Float(v), &self));
+            }
+            T::from_str(&v.to_string()).map(Some).map_err(E::custom)
         }
         fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
-            self.visit_str(&v.to_string())
+            if self.0 != Kind::Bool {
+                return Err(E::invalid_type(serde::de::Unexpected::Bool(v), &self));
+            }
+            T::from_str(&v.to_string()).map(Some).map_err(E::custom)
         }
         // null in a file means unset
         fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
@@ -207,31 +283,36 @@ pub mod __private {
             Ok(None)
         }
         fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-            d.deserialize_any(ScalarVisitor(std::marker::PhantomData))
+            d.deserialize_any(ScalarVisitor::<T>::new())
         }
     }
 
     /// `deserialize_with` target for shadow leaf fields. `name` is baked in
     /// by the derive so parse errors carry the field name.
     #[cfg(feature = "file")]
-    pub fn leaf_named<'de, D, T>(d: D, name: &str) -> Result<Option<T>, D::Error>
+    pub fn leaf_named<'de, D, T>(d: D, name: &str, secret: bool) -> Result<Option<T>, D::Error>
     where
         D: serde::Deserializer<'de>,
-        T: FromStr,
+        T: FromStr + 'static,
         T::Err: fmt::Display,
     {
-        d.deserialize_any(ScalarVisitor::<T>(std::marker::PhantomData))
-            .map_err(|e| serde::de::Error::custom(format_args!("{name}: {e}")))
+        d.deserialize_any(ScalarVisitor::<T>::new()).map_err(|e| {
+            if secret {
+                serde::de::Error::custom(format_args!("{name}: invalid value"))
+            } else {
+                serde::de::Error::custom(format_args!("{name}: {e}"))
+            }
+        })
     }
 
     #[cfg(feature = "file")]
     impl<'de, T> serde::Deserialize<'de> for Leaf<T>
     where
-        T: FromStr,
+        T: FromStr + 'static,
         T::Err: fmt::Display,
     {
         fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-            match d.deserialize_any(ScalarVisitor::<T>(std::marker::PhantomData))? {
+            match d.deserialize_any(ScalarVisitor::<T>::new())? {
                 Some(v) => Ok(Leaf(v)),
                 None => Err(serde::de::Error::custom(
                     "null is not a valid list/map element",

@@ -571,6 +571,7 @@ fn emit_de_fns(cr: &syn::Path, shadow_ident: &syn::Ident, model: &[FieldModel]) 
             };
             let de_ident = format_ident!("__de_{}", m.ident);
             let config_name = &m.config_name;
+            let secret = m.attrs.secret;
             Some(quote! {
                 #[doc(hidden)]
                 pub fn #de_ident<'de, D>(
@@ -579,7 +580,7 @@ fn emit_de_fns(cr: &syn::Path, shadow_ident: &syn::Ident, model: &[FieldModel]) 
                 where
                     D: #cr::__private::serde::Deserializer<'de>,
                 {
-                    #cr::__private::leaf_named(d, #config_name)
+                    #cr::__private::leaf_named(d, #config_name, #secret)
                 }
             })
         })

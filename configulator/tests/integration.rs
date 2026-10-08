@@ -266,14 +266,57 @@ fn file_yaml_basic_and_report() {
     assert_eq!(report.file().unwrap(), f.path().display().to_string());
 }
 
+#[derive(Config, Debug)]
+struct StrictTypesConfig {
+    #[configulator(name = "name", default = "x")]
+    name: String,
+    #[configulator(name = "port", default = "1")]
+    port: u16,
+    #[configulator(name = "ratio", default = "1.5")]
+    ratio: f64,
+    #[configulator(name = "on", default = "false")]
+    on: bool,
+    #[configulator(name = "z", default = "0")]
+    z: configulator::Complex128,
+}
+
+impl Validate for StrictTypesConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
 #[test]
-fn file_quoted_numbers_parse() {
-    let f = yaml_file("port: \"9999\"\n");
-    let config = Configulator::<SimpleConfig>::new()
-        .with_file(yaml_opts(f.path()))
-        .load()
-        .unwrap();
-    assert_eq!(config.port, 9999);
+fn file_scalar_types_are_strict() {
+    let load = |json: &str| {
+        let f = yaml_file(json);
+        Configulator::<StrictTypesConfig>::new()
+            .with_file(FileOptions {
+                paths: vec![f.path().to_path_buf()],
+                ..FileOptions::new(serde_loader(|s| serde_json::from_str(s)))
+            })
+            .load()
+    };
+    for bad in [
+        r#"{"name": 5}"#,
+        r#"{"port": "8080"}"#,
+        r#"{"port": 8080.0}"#,
+        r#"{"port": true}"#,
+        r#"{"ratio": "1.5"}"#,
+        r#"{"on": "true"}"#,
+        r#"{"on": 1}"#,
+        r#"{"z": true}"#,
+    ] {
+        assert!(load(bad).is_err(), "{bad} should be rejected");
+    }
+    let config = load(r#"{"name": "n", "port": 8080, "ratio": 2, "on": true, "z": 3}"#).unwrap();
+    assert_eq!(
+        (config.name.as_str(), config.port, config.ratio, config.on),
+        ("n", 8080, 2.0, true)
+    );
+    assert_eq!(config.z, configulator::Complex128::new(3.0, 0.0));
+    let config = load(r#"{"z": "(1-2i)"}"#).unwrap();
+    assert_eq!(config.z, configulator::Complex128::new(1.0, -2.0));
 }
 
 #[test]
@@ -1778,4 +1821,41 @@ fn env_and_flag_overrides_on_scalar_lists() {
         .load()
         .unwrap();
     assert_eq!(config.tags, vec!["c", "d"]);
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct SecretParseConfig {
+    #[configulator(name = "wait", secret, default = "1s")]
+    wait: Duration,
+    #[configulator(name = "pin", secret, default = "1")]
+    pin: u32,
+}
+
+impl Validate for SecretParseConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn secret_values_stay_out_of_parse_errors() {
+    for (k, v) in [("S_WAIT", "hunter2"), ("S_PIN", "hunter2")] {
+        let err = Configulator::<SecretParseConfig>::new()
+            .with_environment_variables(env_opts("S_"))
+            .with_env_vars(env(&[(k, v)]))
+            .load()
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("hunter2"), "{err}");
+    }
+    for text in ["wait: hunter2\n", "pin: hunter2\n"] {
+        let f = yaml_file(text);
+        let err = Configulator::<SecretParseConfig>::new()
+            .with_file(yaml_opts(f.path()))
+            .load()
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("hunter2"), "{err}");
+    }
 }
