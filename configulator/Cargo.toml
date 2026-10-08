@@ -28,6 +28,7 @@ configulator-derive = { version = "0.3.0", path = "../configulator-derive", defa
 clap = { version = "4", features = ["string"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 num-complex = { version = "0.4", default-features = false, optional = true }
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 
 [dev-dependencies]
 configulator-rs = { path = ".", features = ["testing"] }

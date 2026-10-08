@@ -854,45 +854,7 @@ fn json_quote(s: &str) -> String {
     out
 }
 
-/// Quote `s` like Go's `strconv.Quote`, as the Go generator's `%q` does in
-/// usage errors.
-fn go_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if is_go_print(c) => out.push(c),
-            '\u{7}' => out.push_str("\\a"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{b}' => out.push_str("\\v"),
-            c if c < ' ' || c == '\u{7f}' => out.push_str(&format!("\\x{:02x}", c as u32)),
-            c if (c as u32) < 0x10000 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push_str(&format!("\\U{:08x}", c as u32)),
-        }
-    }
-    out.push('"');
-    out
-}
-
-/// Whether Go's `strconv.IsPrint` holds for `c`. Rust's `escape_debug`
-/// escapes the same classes, plus grapheme extenders at the start of a
-/// string only, so `c` goes second.
-fn is_go_print(c: char) -> bool {
-    match c {
-        ' '..='~' => true,
-        '\0'..='\u{7f}' => false,
-        _ => {
-            let s = format!("a{c}");
-            s.escape_debug().eq(s.chars())
-        }
-    }
-}
+use configulator::__schema::go_quote;
 
 #[cfg(test)]
 mod tests {

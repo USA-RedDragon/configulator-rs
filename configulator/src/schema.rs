@@ -51,23 +51,23 @@ fn json_number(v: f64) -> Option<String> {
 }
 
 /// Whether Go's `strconv.IsPrint` holds for `c`: letters, marks, numbers,
-/// punctuation, symbols, and the ASCII space. Rust's `escape_debug` uses
-/// the same classes, and escapes grapheme extenders only at the start of a
-/// string, so `c` goes second.
+/// punctuation, symbols, and the ASCII space.
 fn is_go_print(c: char) -> bool {
-    match c {
-        ' '..='~' => true,
-        '\0'..='\u{7f}' => false,
-        _ => {
-            let s = format!("a{c}");
-            s.escape_debug().eq(s.chars())
-        }
-    }
+    use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
+    c == ' '
+        || matches!(
+            c.general_category_group(),
+            GeneralCategoryGroup::Letter
+                | GeneralCategoryGroup::Mark
+                | GeneralCategoryGroup::Number
+                | GeneralCategoryGroup::Punctuation
+                | GeneralCategoryGroup::Symbol
+        )
 }
 
 /// Quote `s` like Go's `strconv.Quote`: a double-quoted string with Go
 /// escapes (`\t`, `\x7f`, `\U000e0001`). Valid YAML too.
-pub(crate) fn go_quote(s: &str) -> String {
+pub fn go_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

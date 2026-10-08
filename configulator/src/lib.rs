@@ -220,7 +220,7 @@ pub use crate::field_info::{FieldInfo, FieldType, ScalarHint};
 pub use crate::shadow::__private;
 #[doc(hidden)]
 pub mod __schema {
-    pub use crate::schema::{json_schema, markdown, sample_config};
+    pub use crate::schema::{go_quote, json_schema, markdown, sample_config};
 }
 
 /// Trait for user-defined config validation.
