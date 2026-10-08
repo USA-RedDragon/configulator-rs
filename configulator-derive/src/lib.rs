@@ -84,6 +84,12 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> Result<FieldAttrs, syn::Error>
                 out.name = Some(lit.value());
             } else if meta.path.is_ident("default") {
                 let lit: syn::LitStr = meta.value()?.parse()?;
+                if lit.value().is_empty() {
+                    return Err(syn::Error::new_spanned(
+                        &lit,
+                        "empty default; remove it, the field's zero value is used without a default",
+                    ));
+                }
                 out.default = Some(lit.value());
             } else if meta.path.is_ident("description") {
                 let lit: syn::LitStr = meta.value()?.parse()?;

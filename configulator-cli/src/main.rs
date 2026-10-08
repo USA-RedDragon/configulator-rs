@@ -354,7 +354,11 @@ fn parse_attrs(attrs: &[syn::Attribute]) -> Result<Attrs, String> {
             if meta.path.is_ident("name") {
                 out.name = Some(get(&meta)?);
             } else if meta.path.is_ident("default") {
-                out.default = Some(get(&meta)?);
+                let default = get(&meta)?;
+                if default.is_empty() {
+                    return Err(meta.error("empty default; remove it"));
+                }
+                out.default = Some(default);
             } else if meta.path.is_ident("description") {
                 out.description = Some(get(&meta)?);
             } else if meta.path.is_ident("nested") {
@@ -456,8 +460,8 @@ fn build_fields(
 
     let mut out = Vec::new();
     for field in &named.named {
-        let attrs = parse_attrs(&field.attrs)?;
         let ident = field.ident.as_ref().unwrap().unraw().to_string();
+        let attrs = parse_attrs(&field.attrs).map_err(|e| format!("{type_name}.{ident}: {e}"))?;
         let config_name = attrs.name.clone().unwrap_or_else(|| ident.clone());
 
         let mut ty = &field.ty;

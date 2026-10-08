@@ -1,0 +1,5 @@
+error: empty default; remove it, the field's zero value is used without a default
+ --> tests/ui/empty-default.rs:5:45
+  |
+5 |     #[configulator(name = "user", default = "")]
+  |                                             ^^

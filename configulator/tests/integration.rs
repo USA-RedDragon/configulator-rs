@@ -1382,20 +1382,6 @@ fn markdown_skips_env_for_children_of_env_skipped_struct() {
     assert!(md.contains("--db.size"), "{md}");
 }
 
-#[allow(dead_code)]
-#[derive(Config, Debug)]
-struct EmptyDefaultConfig {
-    #[configulator(name = "user", default = "")]
-    user: String,
-}
-
-#[test]
-fn markdown_leaves_empty_default_cell_blank() {
-    use configulator::HasShadow;
-    let md = configulator::__schema::markdown(&EmptyDefaultConfig::fields(), ".", "", "_");
-    assert!(!md.contains("``"), "{md}");
-}
-
 #[derive(Default)]
 struct NoDebug(String);
 
