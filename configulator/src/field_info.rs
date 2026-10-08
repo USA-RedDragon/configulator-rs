@@ -72,6 +72,8 @@ pub struct FieldInfo {
     pub scalar: ScalarHint,
     /// The field is an `Option`.
     pub optional: bool,
+    /// The leaf type is a filesystem path (`PathBuf`), for shell completion.
+    pub path: bool,
     /// For nested struct fields (and struct collections): the struct has
     /// `#[configulator(allow_unknown_fields)]`.
     pub allow_unknown_fields: bool,

@@ -1131,6 +1131,12 @@ fn emit_fields(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                     | Shape::Leaf { opt: true, .. }
                     | Shape::Nested { opt: true, .. }
             );
+            let path = match &m.shape {
+                Shape::Leaf { ty, .. } | Shape::VecLeaf { elem: ty } => {
+                    last_segment(ty).is_some_and(|seg| seg.ident == "PathBuf")
+                }
+                _ => false,
+            };
             let allow_unknown = match &m.shape {
                 Shape::Nested { ty, .. } => quote!(<#ty as #cr::HasShadow>::ALLOW_UNKNOWN_FIELDS),
                 Shape::VecNested { elem } => {
@@ -1171,6 +1177,7 @@ fn emit_fields(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                     description: #description,
                     scalar: #cr::ScalarHint::#hint,
                     optional: #optional,
+                    path: #path,
                     allow_unknown_fields: #allow_unknown,
                     field_type: #field_type,
                 }

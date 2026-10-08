@@ -29,6 +29,7 @@ pub(crate) fn build_command(
             .short(flag.short)
             .long(flag.name)
             .help("config file")
+            .value_hint(clap::ValueHint::FilePath)
             .num_args(1);
         if let Some(default) = flag.default {
             arg = arg.default_value(default);
@@ -126,6 +127,9 @@ fn register_args(
         }
         if let Some(short) = field.short {
             arg = arg.short(short);
+        }
+        if field.path {
+            arg = arg.value_hint(clap::ValueHint::AnyPath);
         }
         *cmd = std::mem::take(cmd).arg(arg);
     }

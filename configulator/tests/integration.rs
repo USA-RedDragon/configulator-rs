@@ -2202,3 +2202,29 @@ fn file_and_parse_errors_carry_paths_like_go() {
         "port: cannot parse \"x\" from E_PORT: invalid digit found in string"
     );
 }
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct PathHintConfig {
+    #[configulator(name = "data-dir", default = "/tmp")]
+    data_dir: std::path::PathBuf,
+}
+
+#[test]
+fn command_exposes_flags_and_path_hints() {
+    let f = yaml_file("{}\n");
+    let cmd = Configulator::<PathHintConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .command()
+        .unwrap();
+    let hint = |name: &str| {
+        cmd.get_arguments()
+            .find(|a| a.get_long() == Some(name))
+            .map(|a| a.get_value_hint())
+    };
+    assert_eq!(hint("data-dir"), Some(clap::ValueHint::AnyPath));
+    assert_eq!(hint("config"), Some(clap::ValueHint::FilePath));
+}

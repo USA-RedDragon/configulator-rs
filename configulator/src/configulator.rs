@@ -281,6 +281,23 @@ impl<C: HasShadow> Configulator<C> {
         crate::schema::sample_config(&C::fields())
     }
 
+    /// The clap `Command` that loading parses, with every config flag,
+    /// for generating shell completions with `clap_complete`.
+    #[cfg(feature = "cli")]
+    pub fn command(&self) -> Result<clap::Command, ConfigulatorError> {
+        let sep = self
+            .cli_opts
+            .as_ref()
+            .map_or(".", |opts| opts.separator.as_str());
+        cli::build_command(
+            self.cli_command.clone(),
+            &C::fields(),
+            sep,
+            self.config_flag_spec(),
+            &binary_name(),
+        )
+    }
+
     /// The config with only defaults applied, using this builder's array
     /// separator. Neither `required` nor [`Validate`] is checked, like Go's
     /// `Default()`.

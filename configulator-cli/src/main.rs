@@ -21,8 +21,17 @@ use syn::ext::IdentExt;
 )]
 struct Args {
     /// Config root type name (e.g. AppConfig)
-    #[arg(long, short = 't')]
+    #[arg(
+        long,
+        short = 't',
+        required_unless_present = "completions",
+        default_value = ""
+    )]
     r#type: String,
+
+    /// Print a shell completion script to stdout
+    #[arg(long, value_name = "SHELL")]
+    completions: Option<clap_complete::Shell>,
 
     /// Print a JSON Schema to stdout
     #[arg(long)]
@@ -55,11 +64,11 @@ struct Args {
     /// With --markdown, write the table between the
     /// <!-- configulator:begin --> and <!-- configulator:end --> markers in
     /// this file instead of stdout
-    #[arg(long)]
+    #[arg(long, value_hint = clap::ValueHint::FilePath)]
     markdown_file: Option<PathBuf>,
 
     /// With --sample, write the sample to this file instead of stdout
-    #[arg(long)]
+    #[arg(long, value_hint = clap::ValueHint::FilePath)]
     sample_file: Option<PathBuf>,
 
     /// With --markdown-file or --sample-file, change nothing and exit 1 if
@@ -68,12 +77,21 @@ struct Args {
     check: bool,
 
     /// Crate directory to scan for .rs files (target/ is skipped)
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", value_hint = clap::ValueHint::DirPath)]
     dir: PathBuf,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    if let Some(shell) = args.completions {
+        clap_complete::generate(
+            shell,
+            &mut <Args as clap::CommandFactory>::command(),
+            "configulator",
+            &mut std::io::stdout(),
+        );
+        return ExitCode::SUCCESS;
+    }
     if let Err(e) = check_usage(&args) {
         eprintln!("configulator: {e}");
         return ExitCode::from(2);
@@ -552,6 +570,7 @@ fn build_fields(
             description: attrs.description.map(leak),
             scalar,
             optional,
+            path: last_ident(ty).is_some_and(|seg| seg.ident == "PathBuf"),
             allow_unknown_fields,
             field_type,
         });

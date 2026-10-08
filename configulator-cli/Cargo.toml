@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 configulator-rs = { version = "0.2.4", path = "../configulator", default-features = false }
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 syn = { version = "2", features = ["full", "extra-traits"] }
 
 [dev-dependencies]
