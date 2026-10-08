@@ -54,6 +54,8 @@ Go parity release, checked against the shared spec 0.2.0 (58 cases).
 
 ### Fixed
 
+- Config file errors name the full path of the bad value or unknown key,
+  such as `http.port`, `servers[1].weight` or `db.pool.zz`.
 - An empty config file loads as no keys instead of failing to decode, and
   `Report::file()` names the loaded file even when nothing from it survived.
 - No error message repeats a secret's value, including the parser's own text.
