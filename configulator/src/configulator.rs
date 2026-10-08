@@ -127,8 +127,8 @@ impl<C: HasShadow> Configulator<C> {
     /// allowing you to define additional flags, set the app name/version,
     /// or customise help output.
     ///
-    /// Custom args must not share IDs with config field names — clap will
-    /// error at parse time if an arg ID is registered twice.
+    /// Custom args must not share a long name or shorthand with a config
+    /// flag. Loading returns [`ConfigulatorError::FlagConflict`] if one does.
     #[cfg(feature = "cli")]
     #[must_use]
     pub fn with_cli_command(mut self, cmd: clap::Command) -> Self {

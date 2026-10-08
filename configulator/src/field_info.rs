@@ -6,7 +6,7 @@ pub enum ScalarHint {
     /// Anything parsed from a string (`String`, `PathBuf`, `Duration`,
     /// custom `FromStr` types).
     String,
-    /// `i8`–`i128`, `u8`–`u128`, `isize`, `usize`.
+    /// `i8` to `i128`, `u8` to `u128`, `isize`, `usize`.
     Integer,
     /// `f32`, `f64`.
     Float,

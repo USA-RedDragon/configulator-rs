@@ -147,7 +147,7 @@
 //!
 //! ## Supported Types
 //!
-//! - All primitive scalars (`i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`,
+//! - All primitive scalars (`i8` to `i64`, `u8` to `u64`, `f32`, `f64`, `bool`,
 //!   [`String`])
 //! - [`PathBuf`](std::path::PathBuf) and any other
 //!   [`FromStr`](std::str::FromStr) type, including [`Duration`]
