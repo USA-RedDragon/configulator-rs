@@ -84,7 +84,7 @@ pub struct EnvironmentVariableOptions {
     /// Prepended verbatim to every variable name
     /// (e.g. `"MYAPP__"` → `MYAPP__DATABASE__HOST`).
     pub prefix: String,
-    /// Joins nested levels, verbatim. Empty means `"__"`.
+    /// Joins nested levels, verbatim. Empty means `"_"`.
     pub separator: String,
 }
 

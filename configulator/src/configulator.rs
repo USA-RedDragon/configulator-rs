@@ -224,7 +224,7 @@ impl<C: HasShadow> Configulator<C> {
         if let Some(ref opts) = self.env_opts {
             validate_env_options(opts)?;
             let sep = if opts.separator.is_empty() {
-                "__".to_string()
+                "_".to_string()
             } else {
                 opts.separator.clone()
             };

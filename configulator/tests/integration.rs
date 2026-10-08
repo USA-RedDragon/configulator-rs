@@ -2068,3 +2068,16 @@ fn print_config_redacts_collections_holding_secrets() {
         .unwrap();
     assert_eq!(config.print_config(), "items = (redacted)\n");
 }
+
+#[test]
+fn empty_env_separator_means_underscore() {
+    let config = Configulator::<NestedConfig>::new()
+        .with_environment_variables(EnvironmentVariableOptions {
+            prefix: "D_".into(),
+            separator: String::new(),
+        })
+        .with_env_vars(env(&[("D_DATABASE_POOL_SIZE", "7")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.database.pool.size, 7);
+}
