@@ -128,7 +128,6 @@ version = "0.2.4"
 dependencies = [
  "clap",
  "configulator-rs",
- "serde",
  "serde_json",
  "syn",
  "tempfile",

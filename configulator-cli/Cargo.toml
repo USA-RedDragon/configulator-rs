@@ -19,9 +19,8 @@ path = "src/main.rs"
 configulator-rs = { version = "0.2.4", path = "../configulator", default-features = false }
 clap = { version = "4", features = ["derive"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
-serde = "1"
-serde_json = "1"
-toml = "0.9"
 
 [dev-dependencies]
+serde_json = "1"
+toml = "0.9"
 tempfile = "3"

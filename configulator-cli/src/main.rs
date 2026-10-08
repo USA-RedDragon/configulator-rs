@@ -16,7 +16,6 @@ use syn::ext::IdentExt;
 
 #[derive(Parser)]
 #[command(
-    group(clap::ArgGroup::new("output_file").args(["markdown_file", "sample_file"])),
     name = "configulator",
     about = "Print a JSON Schema, sample config, or Markdown table for a #[derive(Config)] struct"
 )]
@@ -46,7 +45,7 @@ struct Args {
     env_prefix: String,
 
     /// Env var separator used in the Markdown table
-    #[arg(long, default_value = "__")]
+    #[arg(long, default_value = "_")]
     env_separator: String,
 
     /// Flag separator used in the Markdown table
@@ -56,16 +55,16 @@ struct Args {
     /// With --markdown, write the table between the
     /// <!-- configulator:begin --> and <!-- configulator:end --> markers in
     /// this file instead of stdout
-    #[arg(long, requires = "markdown")]
+    #[arg(long)]
     markdown_file: Option<PathBuf>,
 
     /// With --sample, write the sample to this file instead of stdout
-    #[arg(long, requires = "sample")]
+    #[arg(long)]
     sample_file: Option<PathBuf>,
 
     /// With --markdown-file or --sample-file, change nothing and exit 1 if
     /// the file is out of date
-    #[arg(long, requires = "output_file")]
+    #[arg(long)]
     check: bool,
 
     /// Crate directory to scan for .rs files (target/ is skipped)
@@ -75,21 +74,94 @@ struct Args {
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    let selected = [args.schema, args.sample, args.markdown]
-        .iter()
-        .filter(|b| **b)
-        .count();
-    if selected != 1 {
-        eprintln!("pass exactly one of --schema, --sample, or --markdown");
-        return ExitCode::FAILURE;
+    if let Err(e) = check_usage(&args) {
+        eprintln!("configulator: {e}");
+        return ExitCode::from(2);
     }
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("configulator: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Reject flag combinations that can't work, before scanning any source.
+/// The caller exits 2 on an error, like the Go generator.
+fn check_usage(args: &Args) -> Result<(), String> {
+    if args.markdown_file.is_some() && !args.markdown {
+        return Err("--markdown-file needs --markdown".into());
+    }
+    if args.sample_file.is_some() && !args.sample {
+        return Err("--sample-file needs --sample".into());
+    }
+    if args.check && args.markdown_file.is_none() && args.sample_file.is_none() {
+        return Err("--check needs --markdown-file or --sample-file".into());
+    }
+    match [args.schema, args.sample, args.markdown]
+        .iter()
+        .filter(|b| **b)
+        .count()
+    {
+        0 => return Err("pass one of --schema, --sample, or --markdown".into()),
+        1 => {}
+        _ => {
+            return Err(
+                "pass at most one of --schema, --sample, --markdown; output goes to stdout, pipe it where you want it"
+                    .into(),
+            )
+        }
+    }
+    if args.format != "yaml" && !args.sample {
+        return Err("--format only applies to --sample".into());
+    }
+    Ok(())
+}
+
+/// Quote `s` for a POSIX shell when it needs it.
+fn shell_quote(s: &str) -> String {
+    let plain = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-./:=,@+%".contains(c));
+    if plain {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
+}
+
+/// The command that rewrites the out-of-date file: the same type, dir,
+/// mode and every non-default option, so it reproduces the same output.
+fn rerun_command(args: &Args, path: &Path) -> String {
+    let mut cmd = vec![
+        "configulator".to_string(),
+        "--type".into(),
+        shell_quote(&args.r#type),
+    ];
+    if args.dir != Path::new(".") {
+        cmd.push("--dir".into());
+        cmd.push(shell_quote(&args.dir.to_string_lossy()));
+    }
+    let mut opt = |name: &str, value: &str, default: &str| {
+        if value != default {
+            cmd.push(name.into());
+            cmd.push(shell_quote(value));
+        }
+    };
+    if args.markdown {
+        opt("--env-prefix", &args.env_prefix, "");
+        opt("--env-separator", &args.env_separator, "_");
+        opt("--flag-separator", &args.flag_separator, ".");
+        cmd.push("--markdown".into());
+        cmd.push("--markdown-file".into());
+    } else {
+        opt("--format", &args.format, "yaml");
+        cmd.push("--sample".into());
+        cmd.push("--sample-file".into());
+    }
+    cmd.push(shell_quote(&path.to_string_lossy()));
+    cmd.join(" ")
 }
 
 fn run(args: &Args) -> Result<(), String> {
@@ -99,9 +171,6 @@ fn run(args: &Args) -> Result<(), String> {
     }
     let fields = build_fields(&args.r#type, &structs, &mut Vec::new())?;
 
-    if !args.sample && args.format != "yaml" {
-        return Err("--format only applies to --sample".to_string());
-    }
     let body = if args.schema {
         configulator::__schema::json_schema(&fields, allows_unknown(&structs[&args.r#type]))
     } else if args.sample {
@@ -117,8 +186,9 @@ fn run(args: &Args) -> Result<(), String> {
             }
             if args.check {
                 return Err(format!(
-                    "{0} is out of date; run configulator --sample --sample-file {0}",
-                    path.display()
+                    "{} is out of date; run {}",
+                    path.display(),
+                    rerun_command(args, path)
                 ));
             }
             std::fs::write(path, &sample).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -135,8 +205,16 @@ fn run(args: &Args) -> Result<(), String> {
         );
         if let Some(path) = &args.markdown_file {
             let table = table.split_once("\n\n").map_or(table.as_str(), |(_, t)| t);
-            if update_markdown_file(path, table, args.check)? {
-                eprintln!("configulator: updated {}", path.display());
+            match update_markdown_file(path, table, args.check)? {
+                Update::Unchanged => {}
+                Update::Written => eprintln!("configulator: updated {}", path.display()),
+                Update::Stale => {
+                    return Err(format!(
+                        "{} is out of date; run {}",
+                        path.display(),
+                        rerun_command(args, path)
+                    ))
+                }
             }
             return Ok(());
         }
@@ -173,22 +251,28 @@ fn splice_markdown(doc: &str, table: &str) -> Result<String, String> {
     ))
 }
 
+/// What [`update_markdown_file`] did.
+#[derive(Debug, PartialEq)]
+enum Update {
+    Unchanged,
+    Written,
+    /// The file is out of date and `check` kept it as is.
+    Stale,
+}
+
 /// Write `table` into `path` between the markers. With `check` set, write
-/// nothing and fail if the file would change. Returns whether it changed.
-fn update_markdown_file(path: &Path, table: &str, check: bool) -> Result<bool, String> {
+/// nothing and report a file that would change as stale.
+fn update_markdown_file(path: &Path, table: &str, check: bool) -> Result<Update, String> {
     let doc = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let out = splice_markdown(&doc, table).map_err(|e| format!("{}: {e}", path.display()))?;
     if out == doc {
-        return Ok(false);
+        return Ok(Update::Unchanged);
     }
     if check {
-        return Err(format!(
-            "{0} is out of date; run configulator --markdown --markdown-file {0}",
-            path.display()
-        ));
+        return Ok(Update::Stale);
     }
     std::fs::write(path, out).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(true)
+    Ok(Update::Written)
 }
 
 fn collect_structs(dir: &Path) -> Result<HashMap<String, syn::ItemStruct>, String> {
@@ -346,6 +430,7 @@ fn scalar_hint(ty: &syn::Type) -> ScalarHint {
             | "u128" | "usize" => return ScalarHint::Integer,
             "f32" | "f64" => return ScalarHint::Float,
             "bool" => return ScalarHint::Bool,
+            "Duration" => return ScalarHint::Duration,
             _ => {}
         }
     }
@@ -471,97 +556,263 @@ fn build_fields(
     Ok(out)
 }
 
-// YAML is written by hand so descriptions can go in comments.
-
-/// Order-preserving sample value tree, serializable by any serde encoder.
+/// Order-preserving sample value tree for the JSON and TOML samples. The
+/// YAML sample is rendered by the runtime crate so it can carry comments.
+#[derive(Debug, PartialEq)]
 enum Sv {
     Str(String),
-    Int(i64),
+    /// An integer, already spelled in decimal, so `u64` values above
+    /// `i64::MAX` survive.
+    Int(String),
     Float(f64),
     Bool(bool),
     Seq(Vec<Sv>),
     Map(Vec<(String, Sv)>),
 }
 
-impl serde::Serialize for Sv {
-    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::{SerializeMap, SerializeSeq};
-        match self {
-            Sv::Str(s) => ser.serialize_str(s),
-            Sv::Int(v) => ser.serialize_i64(*v),
-            Sv::Float(v) => ser.serialize_f64(*v),
-            Sv::Bool(v) => ser.serialize_bool(*v),
-            Sv::Seq(items) => {
-                let mut seq = ser.serialize_seq(Some(items.len()))?;
-                for item in items {
-                    seq.serialize_element(item)?;
-                }
-                seq.end()
-            }
-            Sv::Map(pairs) => {
-                let mut map = ser.serialize_map(Some(pairs.len()))?;
-                for (k, v) in pairs {
-                    map.serialize_entry(k, v)?;
-                }
-                map.end()
-            }
-        }
+fn leaf_value(scalar: ScalarHint, default: Option<&str>) -> Sv {
+    match scalar {
+        ScalarHint::Bool => Sv::Bool(default.and_then(|d| d.parse().ok()).unwrap_or(false)),
+        ScalarHint::Integer => Sv::Int(
+            default
+                .and_then(|d| {
+                    d.parse::<i128>()
+                        .map(|v| v.to_string())
+                        .or_else(|_| d.parse::<u128>().map(|v| v.to_string()))
+                        .ok()
+                })
+                .unwrap_or_else(|| "0".to_string()),
+        ),
+        ScalarHint::Float => Sv::Float(default.and_then(|d| d.parse().ok()).unwrap_or(0.0)),
+        ScalarHint::Duration => Sv::Str(default.unwrap_or("0s").to_string()),
+        _ => Sv::Str(default.unwrap_or("").to_string()),
     }
 }
 
-fn leaf_value(f: &FieldInfo) -> Sv {
-    match (f.scalar, f.default_value) {
-        (ScalarHint::Bool, d) => Sv::Bool(d.and_then(|d| d.parse().ok()).unwrap_or(false)),
-        (ScalarHint::Integer, d) => Sv::Int(d.and_then(|d| d.parse().ok()).unwrap_or(0)),
-        (ScalarHint::Float, d) => Sv::Float(d.and_then(|d| d.parse().ok()).unwrap_or(0.0)),
-        (ScalarHint::String, d) => Sv::Str(d.unwrap_or("").to_string()),
-        (_, d) => Sv::Str(d.unwrap_or("").to_string()),
-    }
-}
-
-fn sample_tree(fields: &[FieldInfo]) -> Sv {
+fn sample_tree(fields: &[FieldInfo]) -> Vec<(String, Sv)> {
     let mut pairs = Vec::new();
     for f in fields.iter().filter(|f| !f.secret) {
         let value = match &f.field_type {
-            FieldType::Struct(sub) => sample_tree(sub),
+            FieldType::Struct(sub) => Sv::Map(sample_tree(sub)),
             FieldType::StructList(_) => Sv::Seq(Vec::new()),
             FieldType::StructMap(_) | FieldType::Map => Sv::Map(Vec::new()),
-            FieldType::List => match f.default_value {
-                Some(d) if !f.secret => Sv::Seq(
-                    d.split(',')
-                        .map(|part| {
-                            let elem = FieldInfo {
-                                default_value: Some(Box::leak(part.to_string().into_boxed_str())),
-                                secret: false,
-                                ..f.clone()
-                            };
-                            leaf_value(&elem)
-                        })
-                        .collect(),
-                ),
-                _ => Sv::Seq(Vec::new()),
-            },
-            FieldType::Bool | FieldType::Scalar => leaf_value(f),
-            _ => leaf_value(f),
+            FieldType::List => Sv::Seq(match f.default_value {
+                Some(d) if !d.is_empty() => d
+                    .split(',')
+                    .map(|part| leaf_value(f.scalar, Some(part)))
+                    .collect(),
+                _ => Vec::new(),
+            }),
+            FieldType::Bool => leaf_value(ScalarHint::Bool, f.default_value),
+            _ => leaf_value(f.scalar, f.default_value),
         };
         pairs.push((f.config_name.to_string(), value));
     }
-    Sv::Map(pairs)
+    pairs
 }
 
 fn encode_sample(fields: &[FieldInfo], format: &str) -> Result<String, String> {
     match format {
         "yaml" => Ok(configulator::__schema::sample_config(fields)),
         "json" => {
-            let mut out =
-                serde_json::to_string_pretty(&sample_tree(fields)).map_err(|e| e.to_string())?;
+            let mut out = String::new();
+            write_json(&mut out, &Sv::Map(sample_tree(fields)), 0)?;
             out.push('\n');
             Ok(out)
         }
-        "toml" => toml::to_string_pretty(&sample_tree(fields)).map_err(|e| e.to_string()),
+        "toml" => {
+            let mut out = String::new();
+            write_toml_table(&mut out, &sample_tree(fields), &[]);
+            Ok(out)
+        }
         other => Err(format!(
             "unknown --format {other:?}: expected yaml, json, or toml"
         )),
+    }
+}
+
+/// Write `v` as JSON indented by two spaces, like Go's `jsontext` encoder.
+fn write_json(out: &mut String, v: &Sv, depth: usize) -> Result<(), String> {
+    match v {
+        Sv::Str(s) => out.push_str(&json_quote(s)),
+        Sv::Int(s) => out.push_str(s),
+        Sv::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Sv::Float(f) if !f.is_finite() => {
+            return Err(format!(
+                "sample value {} has no JSON spelling",
+                go_float_name(*f)
+            ))
+        }
+        Sv::Float(f) => out.push_str(&go_float(*f)),
+        Sv::Seq(items) if items.is_empty() => out.push_str("[]"),
+        Sv::Map(pairs) if pairs.is_empty() => out.push_str("{}"),
+        Sv::Seq(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                out.push_str(if i == 0 { "\n" } else { ",\n" });
+                out.push_str(&"  ".repeat(depth + 1));
+                write_json(out, item, depth + 1)?;
+            }
+            out.push('\n');
+            out.push_str(&"  ".repeat(depth));
+            out.push(']');
+        }
+        Sv::Map(pairs) => {
+            out.push('{');
+            for (i, (k, val)) in pairs.iter().enumerate() {
+                out.push_str(if i == 0 { "\n" } else { ",\n" });
+                out.push_str(&"  ".repeat(depth + 1));
+                out.push_str(&json_quote(k));
+                out.push_str(": ");
+                write_json(out, val, depth + 1)?;
+            }
+            out.push('\n');
+            out.push_str(&"  ".repeat(depth));
+            out.push('}');
+        }
+    }
+    Ok(())
+}
+
+/// Write scalar keys first, then `[table]` sections, the way the Go
+/// generator does. TOML requires that order.
+fn write_toml_table(out: &mut String, pairs: &[(String, Sv)], path: &[String]) {
+    let mut tables = Vec::new();
+    for (k, v) in pairs {
+        match v {
+            Sv::Map(sub) => tables.push((k, sub)),
+            Sv::Seq(items) => {
+                let items: Vec<String> = items.iter().map(toml_scalar).collect();
+                out.push_str(&format!("{} = [{}]\n", toml_key(k), items.join(", ")));
+            }
+            v => out.push_str(&format!("{} = {}\n", toml_key(k), toml_scalar(v))),
+        }
+    }
+    for (k, sub) in tables {
+        let mut full = path.to_vec();
+        full.push(toml_key(k));
+        out.push_str(&format!("\n[{}]\n", full.join(".")));
+        write_toml_table(out, sub, &full);
+    }
+}
+
+/// A bare TOML key when `k` allows it, else a quoted one. The Go generator
+/// always writes keys bare.
+fn toml_key(k: &str) -> String {
+    let bare = !k.is_empty()
+        && k.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if bare {
+        k.to_string()
+    } else {
+        go_quote(k)
+    }
+}
+
+fn toml_scalar(v: &Sv) -> String {
+    match v {
+        Sv::Str(s) => go_quote(s),
+        Sv::Int(s) => s.clone(),
+        Sv::Bool(b) => b.to_string(),
+        Sv::Float(f) if f.is_nan() => "nan".to_string(),
+        Sv::Float(f) if f.is_infinite() => if *f > 0.0 { "inf" } else { "-inf" }.to_string(),
+        Sv::Float(f) => go_float(*f),
+        Sv::Seq(_) | Sv::Map(_) => "\"\"".to_string(),
+    }
+}
+
+/// Spell `v` like the Go generator's sample floats: always with a `.` or an
+/// exponent so TOML reads a float, e.g. `1000.0`, `1e21`, `1e-07`.
+fn go_float(v: f64) -> String {
+    let a = v.abs();
+    if a != 0.0 && !(1e-5..1e16).contains(&a) {
+        let e = format!("{v:e}");
+        let (mantissa, exp) = e.split_once('e').unwrap_or((&e, "0"));
+        let (sign, digits) = match exp.strip_prefix('-') {
+            Some(d) => ("-", d),
+            None => ("", exp),
+        };
+        return format!("{mantissa}e{sign}{digits:0>2}");
+    }
+    let s = v.to_string();
+    if s.contains('.') {
+        s
+    } else {
+        s + ".0"
+    }
+}
+
+/// How Go's `%v` prints a NaN or infinite float.
+fn go_float_name(v: f64) -> &'static str {
+    if v.is_nan() {
+        "NaN"
+    } else if v > 0.0 {
+        "+Inf"
+    } else {
+        "-Inf"
+    }
+}
+
+/// Quote `s` as a JSON string the way Go's `jsontext` does: short escapes
+/// for `\b \f \n \r \t`, `\u00XX` for other control characters, and
+/// everything else as is.
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c < ' ' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Quote `s` like Go's `strconv.Quote`, as the Go generator does for TOML
+/// strings. Mirrors the runtime crate's YAML sample quoting.
+fn go_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if is_go_print(c) => out.push(c),
+            '\u{7}' => out.push_str("\\a"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{b}' => out.push_str("\\v"),
+            c if c < ' ' || c == '\u{7f}' => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if (c as u32) < 0x10000 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push_str(&format!("\\U{:08x}", c as u32)),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Whether Go's `strconv.IsPrint` holds for `c`. Rust's `escape_debug`
+/// escapes the same classes, plus grapheme extenders at the start of a
+/// string only, so `c` goes second.
+fn is_go_print(c: char) -> bool {
+    match c {
+        ' '..='~' => true,
+        '\0'..='\u{7f}' => false,
+        _ => {
+            let s = format!("a{c}");
+            s.escape_debug().eq(s.chars())
+        }
     }
 }
 
@@ -680,6 +931,163 @@ struct SchemaSub {{
         );
 
         assert!(encode_sample(&fields, "ini").is_err());
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["sub"]["host"], "localhost");
+        let parsed: toml::Table = toml::from_str(&toml).unwrap();
+        assert_eq!(parsed["port"].as_integer(), Some(8080));
+        assert_eq!(parsed["tags"].as_array().unwrap().len(), 2);
+    }
+
+    fn go_fixture() -> Vec<FieldInfo> {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            r#"
+#[derive(Config)]
+struct Cfg {
+    #[configulator(name = "name", default = "say \"hi\"", description = "a | b")]
+    name: String,
+    #[configulator(name = "big", default = "18446744073709551615")]
+    big: u64,
+    #[configulator(name = "whole", default = "1000")]
+    whole: f64,
+    #[configulator(name = "huge", default = "1e21")]
+    huge: f64,
+    #[configulator(name = "tiny", default = "0.0000001")]
+    tiny: f64,
+    #[configulator(name = "wait")]
+    wait: configulator::Duration,
+    #[configulator(name = "tags", default = "a,b")]
+    tags: Vec<String>,
+    #[configulator(name = "labels")]
+    labels: HashMap<String, String>,
+    #[configulator(name = "token", secret)]
+    token: String,
+    #[configulator(name = "http", nested)]
+    http: Http,
+}
+
+#[derive(Config)]
+struct Http {
+    #[configulator(name = "host", default = "localhost")]
+    host: String,
+    #[configulator(name = "tls", nested)]
+    tls: Tls,
+}
+
+#[derive(Config)]
+struct Tls {
+    #[configulator(name = "on", default = "true")]
+    on: bool,
+}
+"#,
+        )
+        .unwrap();
+        let structs = collect_structs(dir.path()).unwrap();
+        build_fields("Cfg", &structs, &mut Vec::new()).unwrap()
+    }
+
+    /// The expected outputs are the Go generator's for the same config.
+    #[test]
+    fn samples_match_go() {
+        let fields = go_fixture();
+        assert_eq!(
+            encode_sample(&fields, "json").unwrap(),
+            r#"{
+  "name": "say \"hi\"",
+  "big": 18446744073709551615,
+  "whole": 1000.0,
+  "huge": 1e21,
+  "tiny": 1e-07,
+  "wait": "0s",
+  "tags": [
+    "a",
+    "b"
+  ],
+  "labels": {},
+  "http": {
+    "host": "localhost",
+    "tls": {
+      "on": true
+    }
+  }
+}
+"#
+        );
+        assert_eq!(
+            encode_sample(&fields, "toml").unwrap(),
+            r#"name = "say \"hi\""
+big = 18446744073709551615
+whole = 1000.0
+huge = 1e21
+tiny = 1e-07
+wait = "0s"
+tags = ["a", "b"]
+
+[labels]
+
+[http]
+host = "localhost"
+
+[http.tls]
+on = true
+"#
+        );
+        assert_eq!(
+            configulator::__schema::markdown(&fields, ".", "", "_"),
+            "# Configuration
+
+| Key           | Type           | Default                | Environment   | Flag            | Description |
+|---------------|----------------|------------------------|---------------|-----------------|-------------|
+| `name`        | string         | `say \"hi\"`             | `NAME`        | `--name`        | a \\| b      |
+| `big`         | integer        | `18446744073709551615` | `BIG`         | `--big`         |             |
+| `whole`       | number         | `1000`                 | `WHOLE`       | `--whole`       |             |
+| `huge`        | number         | `1e21`                 | `HUGE`        | `--huge`        |             |
+| `tiny`        | number         | `0.0000001`            | `TINY`        | `--tiny`        |             |
+| `wait`        | string         |                        | `WAIT`        | `--wait`        |             |
+| `tags`        | list of string | `a,b`                  | `TAGS`        | `--tags`        |             |
+| `labels`      | map of string  |                        | \u{2014}             | \u{2014}               |             |
+| `token`       | string         |                        | `TOKEN`       | `--token`       | secret      |
+| `http.host`   | string         | `localhost`            | `HTTP_HOST`   | `--http.host`   |             |
+| `http.tls.on` | boolean        | `true`                 | `HTTP_TLS_ON` | `--http.tls.on` |             |
+"
+        );
+    }
+
+    #[test]
+    fn go_float_spelling() {
+        for (v, want) in [
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (1000.0, "1000.0"),
+            (2.5, "2.5"),
+            (1e21, "1e21"),
+            (1e16, "1e16"),
+            (1e15, "1000000000000000.0"),
+            (1e-5, "0.00001"),
+            (1e-7, "1e-07"),
+            (-1.23e-6, "-1.23e-06"),
+            (1.5e300, "1.5e300"),
+        ] {
+            assert_eq!(go_float(v), want, "{v:e}");
+        }
+        assert_eq!(toml_scalar(&Sv::Float(f64::NAN)), "nan", "TOML spells NaN");
+        let err = encode_sample(
+            &[FieldInfo {
+                default_value: Some("NaN"),
+                ..go_fixture()[2].clone()
+            }],
+            "json",
+        )
+        .unwrap_err();
+        assert_eq!(err, "sample value NaN has no JSON spelling");
+    }
+
+    #[test]
+    fn toml_keys_are_quoted_only_when_needed() {
+        assert_eq!(toml_key("min-version_2"), "min-version_2");
+        assert_eq!(toml_key("a.b c"), "\"a.b c\"");
     }
 
     #[test]
@@ -741,11 +1149,17 @@ struct SchemaSub {{
 
         let err = run(&args(&["--check"])).unwrap_err();
         assert!(err.contains("is out of date"), "{err}");
+        let want = format!(
+            "; run configulator --type SchemaCfg --dir {} --env-prefix APP__ --markdown --markdown-file {}",
+            dir.path().display(),
+            readme.display()
+        );
+        assert!(err.ends_with(&want), "{err}");
 
         run(&args(&[])).unwrap();
         let written = std::fs::read_to_string(&readme).unwrap();
-        assert!(!written.contains("# SchemaCfg configuration"), "{written}");
-        assert!(written.contains("`APP__SUB__HOST`"), "{written}");
+        assert_eq!(written.matches("Configuration").count(), 1, "{written}");
+        assert!(written.contains("`APP__SUB_HOST`"), "{written}");
         assert!(
             written.ends_with("<!-- configulator:end -->\n"),
             "{written}"
@@ -755,19 +1169,78 @@ struct SchemaSub {{
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), written);
     }
 
+    fn usage(args: &[&str]) -> Result<(), String> {
+        let mut a = vec!["configulator", "-t", "X"];
+        a.extend_from_slice(args);
+        check_usage(&Args::try_parse_from(a).unwrap())
+    }
+
     #[test]
     fn markdown_file_flag_dependencies() {
-        assert!(Args::try_parse_from([
+        assert_eq!(
+            usage(&["--schema", "--markdown-file", "R.md"]).unwrap_err(),
+            "--markdown-file needs --markdown"
+        );
+        assert_eq!(
+            usage(&["--markdown", "--check"]).unwrap_err(),
+            "--check needs --markdown-file or --sample-file"
+        );
+        assert!(usage(&["--markdown", "--markdown-file", "R.md", "--check"]).is_ok());
+    }
+
+    #[test]
+    fn mode_and_format_usage() {
+        assert_eq!(
+            usage(&[]).unwrap_err(),
+            "pass one of --schema, --sample, or --markdown"
+        );
+        assert!(usage(&["--schema", "--sample"])
+            .unwrap_err()
+            .starts_with("pass at most one of --schema, --sample, --markdown"));
+        assert_eq!(
+            usage(&["--schema", "--format", "json"]).unwrap_err(),
+            "--format only applies to --sample"
+        );
+        assert!(usage(&["--sample", "--format", "json"]).is_ok());
+    }
+
+    #[test]
+    fn rerun_command_repeats_every_option() {
+        let args = Args::try_parse_from([
             "configulator",
             "-t",
-            "X",
-            "--schema",
+            "Cfg",
+            "--markdown",
             "--markdown-file",
-            "R.md"
+            "docs/my README.md",
+            "--env-prefix",
+            "APP_",
+            "--env-separator",
+            "__",
+            "--flag-separator",
+            "-",
+            "--dir",
+            "crates/app",
         ])
-        .is_err());
-        assert!(
-            Args::try_parse_from(["configulator", "-t", "X", "--markdown", "--check"]).is_err()
+        .unwrap();
+        assert_eq!(
+            rerun_command(&args, args.markdown_file.as_ref().unwrap()),
+            "configulator --type Cfg --dir crates/app --env-prefix APP_ --env-separator __ --flag-separator - --markdown --markdown-file 'docs/my README.md'"
+        );
+        let args = Args::try_parse_from([
+            "configulator",
+            "-t",
+            "Cfg",
+            "--sample",
+            "--format",
+            "toml",
+            "--sample-file",
+            "it's.toml",
+        ])
+        .unwrap();
+        assert_eq!(
+            rerun_command(&args, args.sample_file.as_ref().unwrap()),
+            r"configulator --type Cfg --format toml --sample --sample-file 'it'\''s.toml'"
         );
     }
 
@@ -807,26 +1280,12 @@ struct SchemaSub {{
 
     #[test]
     fn sample_file_flag_dependencies() {
-        assert!(Args::try_parse_from([
-            "configulator",
-            "-t",
-            "X",
-            "--markdown",
-            "--sample-file",
-            "c.yaml"
-        ])
-        .is_err());
-        assert!(Args::try_parse_from(["configulator", "-t", "X", "--sample", "--check"]).is_err());
-        assert!(Args::try_parse_from([
-            "configulator",
-            "-t",
-            "X",
-            "--sample",
-            "--sample-file",
-            "c.yaml",
-            "--check"
-        ])
-        .is_ok());
+        assert_eq!(
+            usage(&["--markdown", "--sample-file", "c.yaml"]).unwrap_err(),
+            "--sample-file needs --sample"
+        );
+        assert!(usage(&["--sample", "--check"]).is_err());
+        assert!(usage(&["--sample", "--sample-file", "c.yaml", "--check"]).is_ok());
     }
 
     #[test]
