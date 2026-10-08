@@ -1,0 +1,14 @@
+- id: configulator-markdown
+  name: configulator markdown
+  description: Render the config reference table into a Markdown file between configulator markers.
+  entry: configulator --markdown
+  language: system
+  pass_filenames: false
+  files: '\.(rs|md)$'
+- id: configulator-sample
+  name: configulator sample
+  description: Write a sample config file, such as config.example.yaml.
+  entry: configulator --sample
+  language: system
+  pass_filenames: false
+  files: '\.(rs|ya?ml)$'
