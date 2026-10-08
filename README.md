@@ -92,7 +92,8 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 - Supported types:
   - Every scalar, `String`, `PathBuf`, and anything else that implements
     `FromStr`. File values go through `FromStr` too, so your types don't need
-    `Deserialize`
+    `Deserialize`. Bools accept Go's spellings (`1`, `t`, `TRUE`, `0`, `f`,
+    `False` and so on) from env, flags and defaults
   - Nested structs, and `Option<T>` of a scalar or struct for optional values
   - `Vec<T>` of scalars
   - `Vec` and `HashMap`/`BTreeMap` of structs, and maps of scalars (files
@@ -104,11 +105,19 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 - `load_with_report()` returns a `Report` of where each field's value came
   from: its default, the config file, an environment variable or a flag,
   naming which one
-- `secret` fields are redacted in `print_config()` output and in error
-  messages
-- `required` fields make loading fail if nothing sets them
-- Unknown keys in config files are an error unless the struct has
-  `#[configulator(allow_unknown_fields)]`
+- `secret` fields never show their value: not in `print_config()`, error
+  messages or flag help, and their defaults are left out of the JSON Schema,
+  the Markdown table and the samples
+- `required` fields make loading fail if nothing sets them. A nested struct
+  counts as set when any field in it is set. Inside an `Option` struct,
+  required fields are checked only when the struct is set, and inside lists
+  and maps they are checked per element (`servers[1].addr`)
+- Config files are strict: unknown keys are an error unless the struct has
+  `#[configulator(allow_unknown_fields)]`, and a value of the wrong type
+  (`port: "80"`, `name: 5`) is an error. An empty file loads as no keys
+- `print_config()` prints one `path = value` line per field in Go's
+  `PrintConfig` format, and `defaults()` returns the config with only
+  defaults applied
 - [configulator-cli](configulator-cli) prints a JSON Schema, a sample config
   file (YAML, JSON or TOML), or a Markdown table of every option
 
@@ -123,16 +132,35 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 | `env = "NAME"` | Use `NAME` for this field's part of the env var name. `env = "-"` skips env |
 | `flag = "name"` | Use `name` for this field's part of the flag name. `flag = "-"` skips flags |
 | `short = 'p'` | Flag shorthand |
-| `secret` | Redact in `print_config()` and error messages |
+| `secret` | Never show the value in output, errors, help or generated docs |
 | `required` | Loading fails if nothing sets it |
 
 On the struct: `#[configulator(allow_unknown_fields)]`, and
 `#[configulator(crate = "path")]` if you renamed the crate.
 
 Env var names are the prefix plus each level's name, uppercased, with `-`
-turned into `_`, joined by the separator. The prefix is used as-is, so
-include its trailing separator: with prefix `MYAPP_` and separator `_`,
+turned into `_`, joined by the separator (`_` if left empty). The prefix is
+used as-is, so include its trailing separator: with prefix `MYAPP_`,
 `http.listen-port` is `MYAPP_HTTP_LISTEN_PORT`.
+
+## Go types
+
+configulator (Go) has built-in support for some standard library types. In
+Rust, use these:
+
+| Go | Rust |
+| --- | --- |
+| `time.Duration` | `configulator::Duration` (no negative durations) |
+| `complex64`, `complex128` | `configulator::Complex64`, `Complex128` |
+| `net.IP`, `netip.Addr` | `std::net::IpAddr` |
+| `net.TCPAddr`, `net.UDPAddr` | `std::net::SocketAddr` (no hostnames) |
+| `net.IPNet` | `ipnet::IpNet` (keeps host bits) |
+| `url.URL` | `url::Url` (absolute only) |
+| `time.Month`, `*time.Location` | `chrono::Month`, `chrono_tz::Tz` |
+
+Any of them works as a field type because it implements `FromStr`. Go reads
+a config file with a decoder chosen by its extension; Rust uses the one
+`FileLoader` you pass.
 
 ## Cargo features
 
@@ -184,19 +212,19 @@ Then run the CLI by hand, from pre-commit, or from CI:
 
 ```sh
 configulator --type AppConfig --sample --sample-file config.example.yaml
-configulator --type AppConfig --markdown --markdown-file README.md --env-prefix MYAPP_ --env-separator _
+configulator --type AppConfig --markdown --markdown-file README.md --env-prefix MYAPP_
 ```
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/USA-RedDragon/configulator-rs
-    rev: v0.2.4
+    rev: v0.3.0
     hooks:
       - id: configulator-sample
         args: [--type, AppConfig, --sample-file, config.example.yaml]
       - id: configulator-markdown
-        args: [--type, AppConfig, --markdown-file, README.md, --env-prefix, MYAPP_, --env-separator, _]
+        args: [--type, AppConfig, --markdown-file, README.md, --env-prefix, MYAPP_]
 ```
 
 ```yaml
@@ -206,7 +234,6 @@ repos:
   with:
     type: AppConfig
     env-prefix: MYAPP_
-    env-separator: _
 ```
 
 The pre-commit hooks and the action both run the configulator-cli version
