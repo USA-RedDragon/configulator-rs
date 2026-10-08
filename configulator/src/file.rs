@@ -60,19 +60,13 @@ pub(crate) fn load<C: HasShadow>(
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?;
-        return Ok(Some((
-            opts.loader.load(&contents)?,
-            path.display().to_string(),
-        )));
+        return Ok(Some((parse(opts, &contents)?, path.display().to_string())));
     }
 
     for path in &opts.paths {
         match std::fs::read_to_string(path) {
             Ok(contents) => {
-                return Ok(Some((
-                    opts.loader.load(&contents)?,
-                    path.display().to_string(),
-                )));
+                return Ok(Some((parse(opts, &contents)?, path.display().to_string())));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
@@ -88,4 +82,14 @@ pub(crate) fn load<C: HasShadow>(
         return Err(ConfigulatorError::FileNotFound);
     }
     Ok(None)
+}
+
+fn parse<C: HasShadow>(
+    opts: &FileOptions<C>,
+    contents: &str,
+) -> Result<C::Shadow, ConfigulatorError> {
+    if contents.is_empty() {
+        return Ok(C::Shadow::default());
+    }
+    opts.loader.load(contents)
 }

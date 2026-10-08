@@ -208,6 +208,7 @@ impl<C: HasShadow> Configulator<C> {
             #[cfg(not(feature = "cli"))]
             let cli_explicit = None;
             if let Some((shadow, path)) = file::load::<C>(opts, cli_explicit)? {
+                report.__set_file(&path);
                 C::overlay(
                     &mut acc,
                     shadow,

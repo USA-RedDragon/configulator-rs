@@ -42,6 +42,7 @@ pub struct Origin {
 #[derive(Debug, Default, Clone)]
 pub struct Report {
     origins: BTreeMap<String, Origin>,
+    file: Option<String>,
 }
 
 impl Report {
@@ -55,12 +56,15 @@ impl Report {
         self.origins.keys().map(String::as_str)
     }
 
-    /// The config file that was loaded, if the file layer set anything.
+    /// The config file that was loaded, even if it set nothing or every
+    /// value in it was overridden.
     pub fn file(&self) -> Option<&str> {
-        self.origins
-            .values()
-            .find(|o| o.layer == Layer::File)
-            .map(|o| o.detail.as_str())
+        self.file.as_deref()
+    }
+
+    #[doc(hidden)]
+    pub fn __set_file(&mut self, path: &str) {
+        self.file = Some(path.to_string());
     }
 
     #[doc(hidden)]

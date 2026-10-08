@@ -1723,3 +1723,29 @@ fn complex_numbers_in_every_layer() {
     assert!(sample.contains(r#"z: "1+2i""#), "{sample}");
     assert!(sample.contains(r#"roots: ["1i", "2"]"#), "{sample}");
 }
+
+#[test]
+fn empty_file_loads_as_no_keys_and_is_reported() {
+    let f = yaml_file("");
+    let (config, report) = Configulator::<SimpleConfig>::new()
+        .with_file(FileOptions {
+            paths: vec![f.path().to_path_buf()],
+            ..FileOptions::new(serde_loader(|s| serde_json::from_str(s)))
+        })
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.port, 8080);
+    assert_eq!(report.file(), Some(f.path().display().to_string().as_str()));
+
+    let f = yaml_file("port: 9000\n");
+    let (config, report) = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--port", "9001"]))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.port, 9001);
+    assert_eq!(report.file(), Some(f.path().display().to_string().as_str()));
+}
