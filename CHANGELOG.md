@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- `--version` works when the app passes a `clap::Command` with `.version(...)`.
+  It comes back as `CLIError`, like `--help`. A config field that uses
+  `--version` or `-V` on such a command is a `FlagConflict`.
+
 ## 0.2.0
 
 Rewrite of how sources are loaded. Each source (defaults, file, env, CLI) now
