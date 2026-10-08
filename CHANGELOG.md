@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.4
+
+- `required` is checked inside list and map elements. A missing field fails
+  with its element path, such as `servers[1].addr`.
+- Secret fields stay out of generated docs: no default in the JSON Schema or
+  the Markdown table, commented out in the YAML sample, and left out of the
+  JSON and TOML samples. Copying a sample no longer sets a secret to
+  `(secret)`.
+- List defaults in the YAML sample are quoted per element (`["*", "a"]`,
+  `[80, 443]`), so the sample is valid YAML. List defaults in the JSON Schema
+  are typed.
+- The Markdown table shows flag shorthands, as in `` `-p`, `--port` ``.
+
 ## 0.2.3
 
 - The sample config shows a full commented example for every list, map and
