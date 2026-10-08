@@ -1593,3 +1593,23 @@ fn required_is_checked_per_collection_element() {
     assert_eq!(config.servers[0].addr, "a");
     assert!(load("{}\n").unwrap().servers.is_empty());
 }
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct ShortFlagConfig {
+    #[configulator(name = "port", short = 'p', default = "1")]
+    port: u16,
+    #[configulator(name = "host", default = "h")]
+    host: String,
+    #[configulator(name = "hidden", short = 'x', flag = "-", default = "1")]
+    hidden: u16,
+}
+
+#[test]
+fn markdown_flag_column_shows_shorthand() {
+    use configulator::HasShadow;
+    let md = configulator::__schema::markdown("S", &ShortFlagConfig::fields(), ".", "", "_");
+    assert!(md.contains("| `-p`, `--port` |"), "{md}");
+    assert!(md.contains("| `--host` "), "{md}");
+    assert!(!md.contains("`-x`"), "{md}");
+}

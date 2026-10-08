@@ -256,6 +256,7 @@ struct Attrs {
     nested: bool,
     secret: bool,
     required: bool,
+    short: Option<char>,
     env: Option<String>,
     flag: Option<String>,
 }
@@ -283,6 +284,8 @@ fn parse_attrs(attrs: &[syn::Attribute]) -> Result<Attrs, String> {
                 out.secret = true;
             } else if meta.path.is_ident("required") {
                 out.required = true;
+            } else if meta.path.is_ident("short") {
+                out.short = Some(meta.value()?.parse::<syn::LitChar>()?.value());
             } else if meta.path.is_ident("env") {
                 out.env = Some(get(&meta)?);
             } else if meta.path.is_ident("flag") {
@@ -458,7 +461,7 @@ fn build_fields(
             flag_segment: leak(flag_segment),
             skip_env: attrs.env.as_deref() == Some("-"),
             skip_cli: attrs.flag.as_deref() == Some("-"),
-            short: None,
+            short: attrs.short,
             secret: attrs.secret,
             required: attrs.required,
             default_value: attrs.default.map(leak),
@@ -586,7 +589,7 @@ use configulator::{{Config, Validate}};
 
 #[derive(Config, Debug)]
 struct SchemaCfg {{
-    #[configulator(name = "port", default = "8080", required, description = "listen port")]
+    #[configulator(name = "port", default = "8080", required, short = 'p', description = "listen port")]
     port: u16,
 
     #[configulator(name = "key", secret)]
@@ -653,7 +656,7 @@ struct SchemaSub {{
         let md = squeezed;
         for want in [
             "| Key | Type | Default | Environment | Flag | Description |",
-            "| `port` | integer | `8080` | `APP_PORT` | `--port` | listen port (required) |",
+            "| `port` | integer | `8080` | `APP_PORT` | `-p`, `--port` | listen port (required) |",
             "| `key` | string | | `APP_KEY` | `--key` | secret |",
             "| `sub.host` | string | `localhost` | `APP_SUB_HOST` | `--sub.host` | bind host |",
             "| `tags` | list of string | `a,b` | `APP_TAGS` | `--tags` | |",
@@ -840,5 +843,14 @@ struct SchemaSub {{
             "--check"
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn markdown_reads_short_from_source() {
+        let dir = fixture();
+        let structs = collect_structs(dir.path()).unwrap();
+        let fields = build_fields("SchemaCfg", &structs, &mut Vec::new()).unwrap();
+        let md = configulator::__schema::markdown("SchemaCfg", &fields, ".", "", "__");
+        assert!(md.contains("`-p`, `--port`"), "{md}");
     }
 }

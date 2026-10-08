@@ -389,7 +389,10 @@ fn markdown_fields(
             "—".to_string()
         };
         let flag_cell = if flag_ok && !f.skip_cli {
-            format!("`--{f_flag}`")
+            match f.short {
+                Some(c) => format!("`-{c}`, `--{f_flag}`"),
+                None => format!("`--{f_flag}`"),
+            }
         } else {
             "—".to_string()
         };
