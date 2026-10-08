@@ -289,6 +289,7 @@ fn scalar_hint(ty: &Type) -> &'static str {
             | "u128" | "usize" => return "Integer",
             "f32" | "f64" => return "Float",
             "bool" => return "Bool",
+            "Duration" => return "Duration",
             _ => {}
         }
     }

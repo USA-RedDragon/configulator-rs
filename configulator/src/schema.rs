@@ -23,11 +23,82 @@ fn esc(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }
     out
+}
+
+/// Spell `v` the way Go's `encoding/json` does: plain decimal, or
+/// exponent form like `1e+21` and `1e-7` outside `[1e-6, 1e21)`. `None`
+/// for NaN and infinities, which JSON cannot hold.
+fn json_number(v: f64) -> Option<String> {
+    if !v.is_finite() {
+        return None;
+    }
+    let a = v.abs();
+    if a != 0.0 && !(1e-6..1e21).contains(&a) {
+        let e = format!("{v:e}");
+        return Some(match e.split_once("e-") {
+            Some(_) => e,
+            None => e.replacen('e', "e+", 1),
+        });
+    }
+    Some(v.to_string())
+}
+
+/// Whether Go's `strconv.IsPrint` holds for `c`: letters, marks, numbers,
+/// punctuation, symbols, and the ASCII space. Rust's `escape_debug` uses
+/// the same classes, and escapes grapheme extenders only at the start of a
+/// string, so `c` goes second.
+fn is_go_print(c: char) -> bool {
+    match c {
+        ' '..='~' => true,
+        '\0'..='\u{7f}' => false,
+        _ => {
+            let s = format!("a{c}");
+            s.escape_debug().eq(s.chars())
+        }
+    }
+}
+
+/// Quote `s` like Go's `strconv.Quote`: a double-quoted string with Go
+/// escapes (`\t`, `\x7f`, `\U000e0001`). Valid YAML too.
+pub(crate) fn go_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if is_go_print(c) => out.push(c),
+            '\u{7}' => out.push_str("\\a"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{b}' => out.push_str("\\v"),
+            c if c < ' ' || c == '\u{7f}' => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if (c as u32) < 0x10000 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push_str(&format!("\\U{:08x}", c as u32)),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Wrap `s` in a Markdown code span, with a double-backtick fence when `s`
+/// holds a backtick.
+fn code_span(s: &str) -> String {
+    if s.contains('`') {
+        format!("`` {s} ``")
+    } else {
+        format!("`{s}`")
+    }
 }
 
 fn write_json(v: &J, indent: usize, out: &mut String) {
@@ -115,7 +186,7 @@ fn schema_object(fields: &[FieldInfo], allow_unknown: bool) -> Vec<(String, J)> 
 
 fn scalar_type(hint: ScalarHint) -> &'static str {
     match hint {
-        ScalarHint::String => "string",
+        ScalarHint::String | ScalarHint::Duration => "string",
         ScalarHint::Integer => "integer",
         ScalarHint::Float => "number",
         ScalarHint::Bool => "boolean",
@@ -172,10 +243,13 @@ fn schema_default(f: &FieldInfo, default: &str) -> Option<J> {
     match &f.field_type {
         FieldType::Bool => Some(J::Raw(default.parse::<bool>().ok()?.to_string())),
         FieldType::Scalar => Some(match f.scalar {
-            ScalarHint::String => J::Str(default.into()),
+            ScalarHint::String | ScalarHint::Duration => J::Str(default.into()),
             ScalarHint::Bool => J::Raw(default.parse::<bool>().ok()?.to_string()),
-            ScalarHint::Integer => J::Raw(default.parse::<i128>().ok()?.to_string()),
-            ScalarHint::Float => J::Raw(default.parse::<f64>().ok()?.to_string()),
+            ScalarHint::Integer => J::Raw(match default.parse::<i128>() {
+                Ok(v) => v.to_string(),
+                Err(_) => default.parse::<u128>().ok()?.to_string(),
+            }),
+            ScalarHint::Float => J::Raw(json_number(default.parse::<f64>().ok()?)?),
         }),
         FieldType::List => default
             .split(',')
@@ -293,16 +367,23 @@ fn indent(lines: Vec<String>, prefix: &str) -> Vec<String> {
     lines.into_iter().map(|l| format!("{prefix}{l}")).collect()
 }
 
+fn quotes(hint: ScalarHint) -> bool {
+    matches!(hint, ScalarHint::String | ScalarHint::Duration)
+}
+
 fn sample_value(f: &FieldInfo) -> String {
     if let Some(default) = f.default_value {
         return match &f.field_type {
-            FieldType::Scalar if f.scalar == ScalarHint::String => format!("{default:?}"),
+            FieldType::Scalar if quotes(f.scalar) => go_quote(default),
             FieldType::List => {
                 let items: Vec<String> = default
                     .split(',')
-                    .map(|item| match f.scalar {
-                        ScalarHint::String => format!("{item:?}"),
-                        _ => item.to_string(),
+                    .map(|item| {
+                        if quotes(f.scalar) {
+                            go_quote(item)
+                        } else {
+                            item.to_string()
+                        }
                     })
                     .collect();
                 format!("[{}]", items.join(", "))
@@ -314,10 +395,11 @@ fn sample_value(f: &FieldInfo) -> String {
         FieldType::Bool => "false".to_string(),
         FieldType::List => "[]".to_string(),
         FieldType::Scalar => match f.scalar {
-            ScalarHint::String => "\"\"".to_string(),
+            ScalarHint::Duration => "\"0s\"".to_string(),
             ScalarHint::Bool => "false".to_string(),
             ScalarHint::Integer => "0".to_string(),
             ScalarHint::Float => "0.0".to_string(),
+            _ => "\"\"".to_string(),
         },
         _ => "\"\"".to_string(),
     }
@@ -345,7 +427,10 @@ const HEADER: [&str; 6] = [
     "Description",
 ];
 
-fn render_table(rows: Vec<[String; 6]>) -> String {
+fn render_table(mut rows: Vec<[String; 6]>) -> String {
+    for cell in rows.iter_mut().flatten() {
+        *cell = cell.replace('|', "\\|");
+    }
     let mut widths: Vec<usize> = HEADER.iter().map(|h| h.chars().count()).collect();
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {
@@ -430,7 +515,7 @@ fn markdown_fields(
             d
         };
         let default_cell = |f: &FieldInfo| match f.default_value {
-            Some(d) if !d.is_empty() && !f.secret => format!("`{d}`"),
+            Some(d) if !d.is_empty() && !f.secret => code_span(d),
             _ => String::new(),
         };
         match &f.field_type {
@@ -524,5 +609,131 @@ fn markdown_fields(
                 ]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Expected values come from Go's `strconv.Quote`.
+    #[test]
+    fn go_quote_matches_go() {
+        for (input, want) in [
+            ("say \"hi\"", "\"say \\\"hi\\\"\""),
+            ("back\\slash", "\"back\\\\slash\""),
+            ("tab\u{9}here", "\"tab\\there\""),
+            ("nl\u{a}x", "\"nl\\nx\""),
+            ("cr\u{d}x", "\"cr\\rx\""),
+            (
+                "\u{0}\u{1}\u{7}\u{8}\u{b}\u{c}\u{1b}\u{1f}",
+                "\"\\x00\\x01\\a\\b\\v\\f\\x1b\\x1f\"",
+            ),
+            ("del\u{7f}", "\"del\\x7f\""),
+            ("caf\u{e9}", "\"caf\u{e9}\""),
+            ("\u{1f600}", "\"\u{1f600}\""),
+            ("\u{a0}", "\"\\u00a0\""),
+            ("\u{ad}", "\"\\u00ad\""),
+            ("\u{200b}", "\"\\u200b\""),
+            ("\u{200c}", "\"\\u200c\""),
+            ("\u{2028}", "\"\\u2028\""),
+            ("\u{3000}", "\"\\u3000\""),
+            ("\u{e000}", "\"\\ue000\""),
+            ("\u{f0000}", "\"\\U000f0000\""),
+            ("\u{feff}", "\"\\ufeff\""),
+            ("\u{fffe}", "\"\\ufffe\""),
+            ("\u{378}", "\"\\u0378\""),
+            ("\u{e0001}", "\"\\U000e0001\""),
+            ("\u{85}", "\"\\u0085\""),
+            ("\u{61c}", "\"\\u061c\""),
+            ("<&>", "\"<&>\""),
+            ("\u{1680}", "\"\\u1680\""),
+            ("\u{300}x", "\"\u{300}x\""),
+            ("x\u{300}", "\"x\u{300}\""),
+            ("\u{1f1e6}", "\"\u{1f1e6}\""),
+            ("\u{1f3fb}", "\"\u{1f3fb}\""),
+            ("\u{e0020}", "\"\\U000e0020\""),
+            ("\u{10ffff}", "\"\\U0010ffff\""),
+        ] {
+            assert_eq!(go_quote(input), want, "{input:?}");
+        }
+    }
+
+    /// Expected values come from Go's `encoding/json/v2`.
+    #[test]
+    fn json_strings_match_go() {
+        for (input, want) in [
+            ("say \"hi\"", "\"say \\\"hi\\\"\""),
+            ("back\\slash", "\"back\\\\slash\""),
+            ("tab\u{9}here", "\"tab\\there\""),
+            ("nl\u{a}x", "\"nl\\nx\""),
+            ("cr\u{d}x", "\"cr\\rx\""),
+            (
+                "\u{0}\u{1}\u{7}\u{8}\u{b}\u{c}\u{1b}\u{1f}",
+                "\"\\u0000\\u0001\\u0007\\b\\u000b\\f\\u001b\\u001f\"",
+            ),
+            ("del\u{7f}", "\"del\u{7f}\""),
+            ("caf\u{e9}", "\"caf\u{e9}\""),
+            ("\u{1f600}", "\"\u{1f600}\""),
+            ("\u{a0}", "\"\u{a0}\""),
+            ("\u{ad}", "\"\u{ad}\""),
+            ("\u{200b}", "\"\u{200b}\""),
+            ("\u{200c}", "\"\u{200c}\""),
+            ("\u{2028}", "\"\u{2028}\""),
+            ("\u{3000}", "\"\u{3000}\""),
+            ("\u{e000}", "\"\u{e000}\""),
+            ("\u{f0000}", "\"\u{f0000}\""),
+            ("\u{feff}", "\"\u{feff}\""),
+            ("\u{fffe}", "\"\u{fffe}\""),
+            ("\u{378}", "\"\u{378}\""),
+            ("\u{e0001}", "\"\u{e0001}\""),
+            ("\u{85}", "\"\u{85}\""),
+            ("\u{61c}", "\"\u{61c}\""),
+            ("<&>", "\"<&>\""),
+            ("\u{1680}", "\"\u{1680}\""),
+            ("\u{300}x", "\"\u{300}x\""),
+            ("x\u{300}", "\"x\u{300}\""),
+            ("\u{1f1e6}", "\"\u{1f1e6}\""),
+            ("\u{1f3fb}", "\"\u{1f3fb}\""),
+            ("\u{e0020}", "\"\u{e0020}\""),
+            ("\u{10ffff}", "\"\u{10ffff}\""),
+        ] {
+            assert_eq!(format!("\"{}\"", esc(input)), want, "{input:?}");
+        }
+    }
+
+    /// Expected values come from Go's `encoding/json/v2`.
+    #[test]
+    #[allow(clippy::excessive_precision)]
+    fn json_numbers_match_go() {
+        for (input, want) in [
+            (0.0_f64, "0"),
+            (1.0_f64, "1"),
+            (1.5_f64, "1.5"),
+            (-2.25_f64, "-2.25"),
+            (1000.0_f64, "1000"),
+            (1e+20_f64, "100000000000000000000"),
+            (1e+21_f64, "1e+21"),
+            (1e-06_f64, "0.000001"),
+            (1e-07_f64, "1e-7"),
+            (1.234567e+06_f64, "1234567"),
+            (1.23456789012e+11_f64, "123456789012"),
+            (0.1_f64, "0.1"),
+            (1e+300_f64, "1e+300"),
+            (-1e+21_f64, "-1e+21"),
+            (5e-324_f64, "5e-324"),
+            (1.7976931348623157e+308_f64, "1.7976931348623157e+308"),
+            (1e+15_f64, "1000000000000000"),
+            (1e+16_f64, "10000000000000000"),
+            (1e-05_f64, "0.00001"),
+            (1.2345e-05_f64, "0.000012345"),
+            (0.10000000149011612_f64, "0.10000000149011612"),
+            (1.5e-07_f64, "1.5e-7"),
+            (1.23456789e+28_f64, "1.23456789e+28"),
+        ] {
+            assert_eq!(json_number(input).as_deref(), Some(want), "{input:?}");
+        }
+        assert_eq!(json_number(f64::NAN), None);
+        assert_eq!(json_number(f64::INFINITY), None);
     }
 }

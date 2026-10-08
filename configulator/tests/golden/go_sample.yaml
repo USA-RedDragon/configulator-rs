@@ -1,0 +1,16 @@
+# Sample configuration
+# a | b
+name: "say \"hi\""
+big: 18446744073709551615
+whole: 1000
+huge: 1e21
+tiny: 0.0000001
+# wait: "0s"
+tags: ["a", "b"]
+# labels:
+#   example: ""
+# token: "(secret)"
+http:
+  host: "localhost"
+  tls:
+    on: true

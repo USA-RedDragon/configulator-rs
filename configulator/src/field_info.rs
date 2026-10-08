@@ -3,9 +3,12 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ScalarHint {
-    /// Anything parsed from a string (`String`, `PathBuf`, `Duration`,
-    /// custom `FromStr` types).
+    /// Anything parsed from a string (`String`, `PathBuf`, complex
+    /// numbers, custom `FromStr` types).
     String,
+    /// [`Duration`](crate::Duration): a string in the schema, `"0s"` in
+    /// samples when there is no default.
+    Duration,
     /// `i8` to `i128`, `u8` to `u128`, `isize`, `usize`.
     Integer,
     /// `f32`, `f64`.

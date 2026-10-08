@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "big": {
+      "default": 18446744073709551615,
+      "type": "integer"
+    },
+    "http": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "localhost",
+          "type": "string"
+        },
+        "tls": {
+          "additionalProperties": false,
+          "properties": {
+            "on": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "huge": {
+      "default": 1e+21,
+      "type": "number"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "name": {
+      "default": "say \"hi\"",
+      "description": "a | b",
+      "type": "string"
+    },
+    "tags": {
+      "default": [
+        "a",
+        "b"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tiny": {
+      "default": 1e-7,
+      "type": "number"
+    },
+    "token": {
+      "type": "string"
+    },
+    "wait": {
+      "type": "string"
+    },
+    "whole": {
+      "default": 1000,
+      "type": "number"
+    }
+  },
+  "title": "Configuration",
+  "type": "object"
+}
