@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.3
+
+- The sample config shows a full commented example for every list, map and
+  optional struct, at any depth, instead of only the first field or `{}`.
+  An optional struct is commented out, so copying the sample doesn't turn it
+  on. An optional value is commented out unless it has a default. Map
+  examples use the key `example`.
+- The pre-commit hooks install and run the configulator-cli version that
+  matches configulator-rs in your `Cargo.lock`, instead of whatever
+  `configulator` is on `PATH`.
+
 ## 0.2.2
 
 - `--version` works when the app passes a `clap::Command` with `.version(...)`.
