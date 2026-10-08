@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "bad": {
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "bigs": {
+      "default": [
+        1,
+        18446744073709551615
+      ],
+      "items": {
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "ctl": {
+      "default": "a\u0001\"\\\t",
+      "type": "string"
+    },
+    "eff": {
+      "default": false,
+      "type": "boolean"
+    },
+    "infs": {
+      "items": {
+        "type": "number"
+      },
+      "type": "array"
+    },
+    "nan": {
+      "type": "number"
+    },
+    "odd.key": {
+      "additionalProperties": false,
+      "properties": {
+        "in ner": {
+          "default": 18446744073709551615,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "one": {
+      "default": true,
+      "type": "boolean"
+    }
+  },
+  "title": "Configuration",
+  "type": "object"
+}

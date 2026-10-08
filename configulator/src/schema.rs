@@ -150,7 +150,7 @@ fn write_json(v: &J, indent: usize, out: &mut String) {
 /// descriptions, defaults, required, and `additionalProperties: false`
 /// unless the struct has `allow_unknown_fields`.
 pub fn json_schema(fields: &[FieldInfo], allow_unknown: bool) -> String {
-    let mut root = schema_object(fields, allow_unknown);
+    let mut root = schema_object(&normalize_bools(fields), allow_unknown);
     root.push((
         "$schema".into(),
         J::Str("http://json-schema.org/draft-07/schema#".into()),
@@ -239,12 +239,58 @@ fn schema_field(f: &FieldInfo) -> Vec<(String, J)> {
     s
 }
 
+/// Parse `s` like Go's `strconv.ParseBool`.
+fn parse_go_bool(s: &str) -> Option<bool> {
+    match s {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+        _ => None,
+    }
+}
+
+/// `fields` with every bool default spelled `true` or `false`, the way the
+/// Go generator normalizes `default:"1"` and friends. List defaults keep
+/// their spelling.
+fn normalize_bools(fields: &[FieldInfo]) -> Vec<FieldInfo> {
+    fields
+        .iter()
+        .map(|f| {
+            let mut f = f.clone();
+            match &mut f.field_type {
+                FieldType::Bool => {
+                    if let Some(b) = f.default_value.and_then(parse_go_bool) {
+                        f.default_value = Some(if b { "true" } else { "false" });
+                    }
+                }
+                FieldType::Struct(sub) | FieldType::StructList(sub) | FieldType::StructMap(sub) => {
+                    *sub = normalize_bools(sub);
+                }
+                _ => {}
+            }
+            f
+        })
+        .collect()
+}
+
+/// Spell a float default the way YAML reads NaN and infinities.
+fn yaml_float(default: &str) -> String {
+    match default.parse::<f64>() {
+        Ok(v) if v.is_nan() => ".nan".into(),
+        Ok(v) if v == f64::INFINITY => ".inf".into(),
+        Ok(v) if v == f64::NEG_INFINITY => "-.inf".into(),
+        _ => default.into(),
+    }
+}
+
+/// `default` as a JSON value, or `None` when it doesn't parse or holds a
+/// NaN or infinity, which JSON can't. A list is `None` when any element
+/// is.
 fn schema_default(f: &FieldInfo, default: &str) -> Option<J> {
     match &f.field_type {
-        FieldType::Bool => Some(J::Raw(default.parse::<bool>().ok()?.to_string())),
+        FieldType::Bool => Some(J::Raw(parse_go_bool(default)?.to_string())),
         FieldType::Scalar => Some(match f.scalar {
             ScalarHint::String | ScalarHint::Duration => J::Str(default.into()),
-            ScalarHint::Bool => J::Raw(default.parse::<bool>().ok()?.to_string()),
+            ScalarHint::Bool => J::Raw(parse_go_bool(default)?.to_string()),
             ScalarHint::Integer => J::Raw(match default.parse::<i128>() {
                 Ok(v) => v.to_string(),
                 Err(_) => default.parse::<u128>().ok()?.to_string(),
@@ -272,7 +318,7 @@ fn schema_default(f: &FieldInfo, default: &str) -> Option<J> {
 /// descriptions as comments. Always YAML, whatever loader the app uses.
 pub fn sample_config(fields: &[FieldInfo]) -> String {
     let mut b = "# Sample configuration\n".to_string();
-    sample_fields(&mut b, fields, 0);
+    sample_fields(&mut b, &normalize_bools(fields), 0);
     b
 }
 
@@ -375,15 +421,14 @@ fn sample_value(f: &FieldInfo) -> String {
     if let Some(default) = f.default_value {
         return match &f.field_type {
             FieldType::Scalar if quotes(f.scalar) => go_quote(default),
+            FieldType::Scalar if f.scalar == ScalarHint::Float => yaml_float(default),
             FieldType::List => {
                 let items: Vec<String> = default
                     .split(',')
-                    .map(|item| {
-                        if quotes(f.scalar) {
-                            go_quote(item)
-                        } else {
-                            item.to_string()
-                        }
+                    .map(|item| match f.scalar {
+                        h if quotes(h) => go_quote(item),
+                        ScalarHint::Float => yaml_float(item),
+                        _ => item.to_string(),
                     })
                     .collect();
                 format!("[{}]", items.join(", "))
@@ -413,7 +458,15 @@ fn sample_value(f: &FieldInfo) -> String {
 pub fn markdown(fields: &[FieldInfo], flag_sep: &str, env_prefix: &str, env_sep: &str) -> String {
     let mut rows: Vec<[String; 6]> = Vec::new();
     markdown_fields(
-        &mut rows, fields, "", env_prefix, env_sep, "", flag_sep, true, true,
+        &mut rows,
+        &normalize_bools(fields),
+        "",
+        env_prefix,
+        env_sep,
+        "",
+        flag_sep,
+        true,
+        true,
     );
     render_table(rows)
 }
@@ -656,6 +709,37 @@ mod tests {
             ("\u{10ffff}", "\"\\U0010ffff\""),
         ] {
             assert_eq!(go_quote(input), want, "{input:?}");
+        }
+    }
+
+    /// Expected values follow the Go generator's `yamlFloat`.
+    #[test]
+    fn yaml_floats_match_go() {
+        for (input, want) in [
+            ("NaN", ".nan"),
+            ("nan", ".nan"),
+            ("inf", ".inf"),
+            ("+Inf", ".inf"),
+            ("Infinity", ".inf"),
+            ("-inf", "-.inf"),
+            ("1e21", "1e21"),
+            ("-0", "-0"),
+            ("x", "x"),
+        ] {
+            assert_eq!(yaml_float(input), want, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn bool_defaults_parse_like_go() {
+        for s in ["1", "t", "T", "TRUE", "true", "True"] {
+            assert_eq!(parse_go_bool(s), Some(true), "{s:?}");
+        }
+        for s in ["0", "f", "F", "FALSE", "false", "False"] {
+            assert_eq!(parse_go_bool(s), Some(false), "{s:?}");
+        }
+        for s in ["yes", "tRUE", "", " true"] {
+            assert_eq!(parse_go_bool(s), None, "{s:?}");
         }
     }
 
