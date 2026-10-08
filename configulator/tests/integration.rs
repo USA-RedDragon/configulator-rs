@@ -1518,3 +1518,78 @@ fn sample_loads_as_is_and_uncommented() {
     assert_eq!(config.token.as_deref(), Some("(secret)"));
     assert_eq!(config.on, Some(false));
 }
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct SecretDefaultConfig {
+    #[configulator(name = "token", secret, default = "hunter2")]
+    token: String,
+}
+
+impl Validate for SecretDefaultConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn secret_defaults_stay_out_of_generated_docs() {
+    use configulator::HasShadow;
+    let schema = Configulator::<SecretDefaultConfig>::json_schema();
+    let sample = Configulator::<SecretDefaultConfig>::sample_config();
+    let md = configulator::__schema::markdown(
+        "SecretDefaultConfig",
+        &SecretDefaultConfig::fields(),
+        ".",
+        "",
+        "_",
+    );
+    for out in [&schema, &sample, &md] {
+        assert!(!out.contains("hunter2"), "{out}");
+    }
+    let config = Configulator::<SecretDefaultConfig>::new().load().unwrap();
+    assert_eq!(config.token, "hunter2");
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct ReqServer {
+    #[configulator(name = "addr", required)]
+    addr: String,
+    #[configulator(name = "weight", default = "1")]
+    weight: u16,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct ReqElementsConfig {
+    #[configulator(name = "servers", nested)]
+    servers: Vec<ReqServer>,
+    #[configulator(name = "pools", nested)]
+    pools: HashMap<String, ReqServer>,
+}
+
+#[test]
+fn required_is_checked_per_collection_element() {
+    let load = |text: &str| {
+        let f = yaml_file(text);
+        Configulator::<ReqElementsConfig>::new()
+            .with_file(yaml_opts(f.path()))
+            .load_without_validation()
+    };
+    let required_path = |text: &str| match load(text).unwrap_err() {
+        ConfigulatorError::Required { path } => path,
+        e => panic!("{e}"),
+    };
+    assert_eq!(
+        required_path("servers:\n  - addr: a\n  - weight: 2\n"),
+        "servers[1].addr"
+    );
+    assert_eq!(
+        required_path("pools:\n  p:\n    weight: 2\n"),
+        "pools.p.addr"
+    );
+    let config = load("servers:\n  - addr: a\n").unwrap();
+    assert_eq!(config.servers[0].addr, "a");
+    assert!(load("{}\n").unwrap().servers.is_empty());
+}

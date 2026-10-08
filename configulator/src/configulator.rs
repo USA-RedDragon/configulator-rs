@@ -445,8 +445,8 @@ fn flag_name_map(fields: &[FieldInfo], sep: &str) -> HashMap<String, String> {
 /// Check `required` fields against the report: some layer (including a
 /// `default` attribute) must have set each one. A nested struct counts as
 /// set when any field under it is set, and the fields of an unset
-/// `Option` struct are not checked. Fields inside collections are not
-/// checked.
+/// `Option` struct are not checked. Required leaves inside collection
+/// elements are checked per element when each element is built.
 fn check_required(
     fields: &[FieldInfo],
     path_prefix: &str,

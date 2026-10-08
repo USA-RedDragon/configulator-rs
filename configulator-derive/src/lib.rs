@@ -833,6 +833,12 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
         let ident = &m.ident;
         let config_name = &m.config_name;
         let secret = m.attrs.secret;
+        let missing = quote! {
+            return ::std::result::Result::Err(#cr::ConfigulatorError::Required {
+                path: #cr::__private::join(prefix, #config_name),
+            })
+        };
+        let required = m.attrs.required && m.attrs.default.is_none();
         let init = match &m.shape {
             Shape::Bool { opt } | Shape::Leaf { opt, .. } => {
                 let ty = match &m.shape {
@@ -853,6 +859,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                             #cr::__private::parse_leaf::<#ty>(#default, #config_name, #secret)?,
                         )
                     }},
+                    (None, _) if required => missing.clone(),
                     (None, false) => quote!(<#ty as ::std::default::Default>::default()),
                     (None, true) => quote!(::std::option::Option::None),
                 };
@@ -878,6 +885,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                             .map(|x| #cr::__private::parse_leaf::<#elem>(x, #config_name, #secret))
                             .collect::<::std::result::Result<_, _>>()?
                     }},
+                    None if required => missing.clone(),
                     None => quote!(::std::vec::Vec::new()),
                 };
                 quote! {
@@ -891,13 +899,18 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
             }
             Shape::MapLeaf { kind, .. } => {
                 let map = map_type(kind);
+                let none_arm = if required {
+                    missing.clone()
+                } else {
+                    quote!(#map::new())
+                };
                 quote! {
                     #ident: match sh.#ident {
                         ::std::option::Option::Some(mp) => mp
                             .into_iter()
                             .map(|(k, #cr::__private::Leaf(v))| (k, v))
                             .collect(),
-                        ::std::option::Option::None => #map::new(),
+                        ::std::option::Option::None => #none_arm,
                     }
                 }
             }
