@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+Matches Go configulator v2.4's generated output:
+
+- YAML sample: bool list defaults are normalized (`1,f,True` shows as
+  `[true, false, true]`), and a list default with an element that doesn't
+  parse is written as `[]`, like the JSON and TOML samples.
+- TOML sample: the "too large for a TOML integer" comment spells the key
+  the way the TOML line does, quoting it when needed.
+- Markdown table: control characters in any cell are escaped (`\n`, `\t`,
+  `\x1b`) so a row can't break the table.
+
 ## 0.3.0
 
 Go parity release, checked against the shared spec 0.2.0 (58 cases).
