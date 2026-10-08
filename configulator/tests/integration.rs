@@ -1442,3 +1442,79 @@ fn nested_collections_inside_collection_elements() {
     );
     assert_eq!(o("peers[0].opt.level").map(|x| x.0), Some(Layer::Default));
 }
+
+#[derive(Config, Debug, PartialEq)]
+struct SampleCfg {
+    #[configulator(name = "peers", nested, description = "the peers")]
+    peers: Vec<NcPeer>,
+    #[configulator(name = "by-name", nested)]
+    by_name: HashMap<String, NcPeer>,
+    #[configulator(name = "labels")]
+    labels: HashMap<String, String>,
+    #[configulator(name = "tls", nested)]
+    tls: Option<TlsConfig>,
+    #[configulator(name = "token", secret)]
+    token: Option<String>,
+    #[configulator(name = "mode", default = "fast")]
+    mode: Option<String>,
+    #[configulator(name = "on")]
+    on: Option<bool>,
+    #[configulator(name = "port", default = "8080")]
+    port: u16,
+}
+
+impl Validate for SampleCfg {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+fn load_sample(text: &str) -> SampleCfg {
+    let f = yaml_file(text);
+    Configulator::<SampleCfg>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap_or_else(|e| panic!("{e}\n{text}"))
+}
+
+#[test]
+fn sample_loads_as_is_and_uncommented() {
+    let sample = Configulator::<SampleCfg>::sample_config();
+    let config = load_sample(&sample);
+    assert!(config.peers.is_empty() && config.by_name.is_empty() && config.labels.is_empty());
+    assert_eq!(config.tls, None);
+    assert_eq!(config.token, None);
+    assert_eq!(config.mode.as_deref(), Some("fast"));
+    assert_eq!(config.on, None);
+    assert_eq!(config.port, 8080);
+
+    let key = |s: &str| {
+        let s = s.trim_start_matches("- ");
+        s.split_once(':').is_some_and(|(k, _)| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    };
+    let uncommented: String = sample
+        .lines()
+        .map(|l| {
+            let body = l.trim_start();
+            let ind = &l[..l.len() - body.len()];
+            match body.strip_prefix("# ") {
+                Some(rest) if key(rest.trim_start()) => format!("{ind}{rest}\n"),
+                _ => format!("{l}\n"),
+            }
+        })
+        .collect();
+    let config = load_sample(&uncommented);
+    let peer = &config.peers[0];
+    assert_eq!(peer.slots, 3);
+    assert_eq!(peer.rules[0].range, 1);
+    assert!(peer.rules[0].on);
+    assert_eq!(peer.tags["example"].range, 1);
+    assert_eq!(peer.opt, Some(NcLevel { level: 7 }));
+    assert_eq!(config.by_name["example"].inner.level, 7);
+    assert_eq!(config.labels["example"], "");
+    assert_eq!(config.tls.as_ref().unwrap().min_version, 12);
+    assert_eq!(config.token.as_deref(), Some("(secret)"));
+    assert_eq!(config.on, Some(false));
+}

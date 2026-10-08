@@ -199,39 +199,86 @@ fn sample_fields(b: &mut String, fields: &[FieldInfo], depth: usize) {
             b.push_str(&format!("{ind}# {desc}\n"));
         }
         let tag = f.config_name;
-        match &f.field_type {
-            FieldType::Struct(sub) => {
+        let commented_example = match &f.field_type {
+            FieldType::Struct(sub) if !f.optional => {
                 b.push_str(&format!("{ind}{tag}:\n"));
                 sample_fields(b, sub, depth + 1);
+                false
             }
-            FieldType::StructList(sub) => {
-                b.push_str(&format!("{ind}# {tag}: []  # list of objects:\n"));
-                b.push_str(&format!("{ind}# {tag}:\n"));
-                if let Some(ef) = sub.first() {
-                    b.push_str(&format!(
-                        "{ind}#   - {}: {}\n",
-                        ef.config_name,
-                        sample_value(ef)
-                    ));
-                }
-            }
-            FieldType::Map | FieldType::StructMap(_) => {
-                b.push_str(&format!("{ind}# {tag}: {{}}  # map\n"));
-            }
+            FieldType::Struct(_)
+            | FieldType::StructList(_)
+            | FieldType::StructMap(_)
+            | FieldType::Map => true,
             _ => {
-                let mut val = sample_value(f);
-                if f.secret {
-                    val = "\"(secret)\"".to_string();
-                }
-                let is_bool = matches!(f.field_type, FieldType::Bool);
-                if f.default_value.is_none() && !is_bool {
-                    b.push_str(&format!("{ind}# {tag}: {val}\n"));
+                let val = if f.secret {
+                    "\"(secret)\"".to_string()
                 } else {
-                    b.push_str(&format!("{ind}{tag}: {val}\n"));
-                }
+                    sample_value(f)
+                };
+                let live = if f.optional {
+                    f.default_value.is_some()
+                } else {
+                    f.default_value.is_some() || matches!(f.field_type, FieldType::Bool)
+                };
+                let hash = if live { "" } else { "# " };
+                b.push_str(&format!("{ind}{hash}{tag}: {val}\n"));
+                false
+            }
+        };
+        if commented_example {
+            for line in example_field(f) {
+                b.push_str(&format!("{ind}# {line}\n"));
             }
         }
     }
+}
+
+/// Uncommented YAML lines for `f` with one example element in every
+/// collection, at any depth.
+fn example_field(f: &FieldInfo) -> Vec<String> {
+    let tag = f.config_name;
+    match &f.field_type {
+        FieldType::Struct(sub) => {
+            let mut lines = vec![format!("{tag}:")];
+            lines.extend(indent(example_fields(sub), "  "));
+            lines
+        }
+        FieldType::StructList(sub) => {
+            let item = example_fields(sub);
+            let Some((first, rest)) = item.split_first() else {
+                return vec![format!("{tag}: []")];
+            };
+            let mut lines = vec![format!("{tag}:"), format!("  - {first}")];
+            lines.extend(indent(rest.to_vec(), "    "));
+            lines
+        }
+        FieldType::StructMap(sub) => {
+            let mut lines = vec![format!("{tag}:"), "  example:".to_string()];
+            lines.extend(indent(example_fields(sub), "    "));
+            lines
+        }
+        FieldType::Map => {
+            let elem = FieldInfo {
+                default_value: None,
+                field_type: FieldType::Scalar,
+                ..f.clone()
+            };
+            vec![
+                format!("{tag}:"),
+                format!("  example: {}", sample_value(&elem)),
+            ]
+        }
+        _ if f.secret => vec![format!("{tag}: \"(secret)\"")],
+        _ => vec![format!("{tag}: {}", sample_value(f))],
+    }
+}
+
+fn example_fields(fields: &[FieldInfo]) -> Vec<String> {
+    fields.iter().flat_map(example_field).collect()
+}
+
+fn indent(lines: Vec<String>, prefix: &str) -> Vec<String> {
+    lines.into_iter().map(|l| format!("{prefix}{l}")).collect()
 }
 
 fn sample_value(f: &FieldInfo) -> String {
@@ -257,8 +304,9 @@ fn sample_value(f: &FieldInfo) -> String {
 
 /// Render a flat Markdown reference table of every config key: file
 /// path, env var, flag, type, default, and description. Collections are
-/// file-only, so their env/flag cells are `—`; struct-collection element
-/// fields appear as `servers[].addr` / `pools.<key>.size` rows.
+/// file-only, so their env and flag cells hold an em dash character.
+/// Struct-collection element fields appear as `servers[].addr` and
+/// `pools.<key>.size` rows.
 pub fn markdown(
     type_name: &str,
     fields: &[FieldInfo],
