@@ -1547,7 +1547,14 @@ fn secret_defaults_stay_out_of_generated_docs() {
     for out in [&schema, &sample, &md] {
         assert!(!out.contains("hunter2"), "{out}");
     }
+    assert!(sample.contains("# token: \"(secret)\""), "{sample}");
     let config = Configulator::<SecretDefaultConfig>::new().load().unwrap();
+    assert_eq!(config.token, "hunter2");
+    let f = yaml_file(&sample);
+    let config = Configulator::<SecretDefaultConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
     assert_eq!(config.token, "hunter2");
 }
 

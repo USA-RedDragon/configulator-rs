@@ -215,7 +215,9 @@ fn sample_fields(b: &mut String, fields: &[FieldInfo], depth: usize) {
                 } else {
                     sample_value(f)
                 };
-                let live = if f.optional {
+                let live = if f.secret {
+                    false
+                } else if f.optional {
                     f.default_value.is_some()
                 } else {
                     f.default_value.is_some() || matches!(f.field_type, FieldType::Bool)

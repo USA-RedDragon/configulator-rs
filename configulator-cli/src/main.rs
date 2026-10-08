@@ -515,9 +515,6 @@ impl serde::Serialize for Sv {
 }
 
 fn leaf_value(f: &FieldInfo) -> Sv {
-    if f.secret {
-        return Sv::Str("(secret)".into());
-    }
     match (f.scalar, f.default_value) {
         (ScalarHint::Bool, d) => Sv::Bool(d.and_then(|d| d.parse().ok()).unwrap_or(false)),
         (ScalarHint::Integer, d) => Sv::Int(d.and_then(|d| d.parse().ok()).unwrap_or(0)),
@@ -529,7 +526,7 @@ fn leaf_value(f: &FieldInfo) -> Sv {
 
 fn sample_tree(fields: &[FieldInfo]) -> Sv {
     let mut pairs = Vec::new();
-    for f in fields {
+    for f in fields.iter().filter(|f| !f.secret) {
         let value = match &f.field_type {
             FieldType::Struct(sub) => sample_tree(sub),
             FieldType::StructList(_) => Sv::Seq(Vec::new()),
@@ -633,7 +630,7 @@ struct SchemaSub {{
         let sample = configulator::__schema::sample_config("SchemaCfg", &fields);
         for want in [
             "port: 8080",
-            "key: \"(secret)\"",
+            "# key: \"(secret)\"",
             "# bind host",
             "host: \"localhost\"",
             "tags: [a,b]",
@@ -672,24 +669,16 @@ struct SchemaSub {{
         let fields = build_fields("SchemaCfg", &structs, &mut Vec::new()).unwrap();
 
         let json = encode_sample(&fields, "SchemaCfg", "json").unwrap();
-        for want in [
-            "\"port\": 8080",
-            "\"key\": \"(secret)\"",
-            "\"host\": \"localhost\"",
-            "\"a\",",
-        ] {
+        for want in ["\"port\": 8080", "\"host\": \"localhost\"", "\"a\","] {
             assert!(json.contains(want), "json sample missing {want}:\n{json}");
         }
+        assert!(!json.contains("\"key\""), "{json}");
 
         let toml = encode_sample(&fields, "SchemaCfg", "toml").unwrap();
-        for want in [
-            "port = 8080",
-            "key = \"(secret)\"",
-            "[sub]",
-            "host = \"localhost\"",
-        ] {
+        for want in ["port = 8080", "[sub]", "host = \"localhost\""] {
             assert!(toml.contains(want), "toml sample missing {want}:\n{toml}");
         }
+        assert!(!toml.contains("key ="), "{toml}");
         assert!(
             toml.find("[sub]").unwrap() > toml.find("port =").unwrap(),
             "toml scalars must precede tables:\n{toml}"
