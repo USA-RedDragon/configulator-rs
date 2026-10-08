@@ -117,7 +117,7 @@ pub mod __private {
 
     /// The one leaf parse path: file, env, CLI, and defaults all land here,
     /// so a custom `FromStr` type behaves identically in all four layers.
-    pub fn parse_leaf<T: FromStr>(
+    pub fn parse_leaf<T: FromStr + 'static>(
         s: &str,
         field: &str,
         secret: bool,
@@ -125,6 +125,27 @@ pub mod __private {
     where
         T::Err: fmt::Display,
     {
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
+            let parsed = match s {
+                "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+                "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+                _ => None,
+            };
+            return match parsed {
+                Some(b) => Ok(*(Box::new(b) as Box<dyn std::any::Any>)
+                    .downcast::<T>()
+                    .unwrap()),
+                None => Err(ConfigulatorError::ParseError {
+                    field: field.to_string(),
+                    value: if secret {
+                        "(redacted)".to_string()
+                    } else {
+                        s.to_string()
+                    },
+                    message: "invalid boolean".to_string(),
+                }),
+            };
+        }
         T::from_str(s).map_err(|e| ConfigulatorError::ParseError {
             field: field.to_string(),
             value: if secret {

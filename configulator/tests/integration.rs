@@ -228,7 +228,7 @@ fn defaults_report_origins() {
         .unwrap();
     let origin = report.origin("port").unwrap();
     assert_eq!(origin.layer, Layer::Default);
-    assert_eq!(origin.detail, "default");
+    assert_eq!(origin.detail, "default tag");
 }
 
 #[test]
@@ -1857,5 +1857,44 @@ fn secret_values_stay_out_of_parse_errors() {
             .unwrap_err()
             .to_string();
         assert!(!err.contains("hunter2"), "{err}");
+    }
+}
+
+#[test]
+fn bools_accept_go_parsebool_spellings() {
+    for (v, want) in [
+        ("1", true),
+        ("t", true),
+        ("TRUE", true),
+        ("True", true),
+        ("0", false),
+        ("f", false),
+        ("F", false),
+        ("FALSE", false),
+    ] {
+        let config = Configulator::<SimpleConfig>::new()
+            .with_environment_variables(env_opts("B_"))
+            .with_env_vars(env(&[("B_DEBUG", v)]))
+            .load()
+            .unwrap();
+        assert_eq!(config.debug, want, "{v}");
+    }
+    let config = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--debug=1"]))
+        .load()
+        .unwrap();
+    assert!(config.debug);
+    for bad in ["yes", "tRUE", "2", ""] {
+        assert!(
+            Configulator::<SimpleConfig>::new()
+                .with_environment_variables(env_opts("B_"))
+                .with_env_vars(env(&[("B_DEBUG", bad)]))
+                .load()
+                .is_err(),
+            "{bad:?}"
+        );
     }
 }

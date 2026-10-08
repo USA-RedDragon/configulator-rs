@@ -176,7 +176,7 @@ impl<C: HasShadow> Configulator<C> {
             defaults,
             "",
             Layer::Default,
-            &|_| "default".to_string(),
+            &|_| "default tag".to_string(),
             &mut report,
         );
 
@@ -289,7 +289,7 @@ impl<C: HasShadow> Configulator<C> {
             defaults,
             "",
             Layer::Default,
-            &|_| "default".to_string(),
+            &|_| "default tag".to_string(),
             &mut report,
         );
         C::build(acc, "", ",", &mut report)
