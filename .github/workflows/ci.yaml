@@ -46,6 +46,72 @@ jobs:
           rustup target add ${{ matrix.target }}
           cargo test --all --target ${{ matrix.target }} --release
 
+  checks:
+    name: Clippy, features, trybuild
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Clippy
+        run: cargo clippy --workspace --features testing --all-targets -- -D warnings
+      - name: Feature matrix
+        run: |
+          set -e
+          for features in \
+            "" \
+            "--no-default-features --features env" \
+            "--no-default-features --features file" \
+            "--no-default-features --features cli" \
+            "--no-default-features --features file,env" \
+            "--no-default-features --features file,cli" \
+            "--no-default-features --features testing"; do
+            echo "::group::cargo build $features"
+            cargo build -p configulator-rs $features
+            echo "::endgroup::"
+          done
+      - name: Trybuild UI tests
+        run: cargo test --features testing --test ui
+
+  msrv:
+    name: MSRV (1.85, both crates)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Check with MSRV toolchain
+        run: |
+          rustup toolchain install 1.85 --profile minimal
+          cargo +1.85 check -p configulator-derive
+          cargo +1.85 check -p configulator-rs --all-features
+          cargo +1.85 check -p configulator-cli
+
+  corpus:
+    name: Conformance corpus (shared SPEC)
+    runs-on: ubuntu-24.04
+    env:
+      # The SPEC version this release is pinned to. Bumping it requires
+      # both repos green against the new corpus.
+      EXPECTED_SPEC_VERSION: 0.1.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Checkout configulator (SPEC owner)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: USA-RedDragon/configulator
+          path: spec-repo
+      - name: Verify SPEC pin
+        run: |
+          actual=$(cat spec-repo/spec/SPEC_VERSION)
+          if [ "$actual" != "$EXPECTED_SPEC_VERSION" ]; then
+            echo "::error::SPEC_VERSION is $actual, this release is pinned to $EXPECTED_SPEC_VERSION"
+            exit 1
+          fi
+      - name: Run corpus
+        run: |
+          CONFIGULATOR_SPEC_DIR="$PWD/spec-repo/spec" \
+            cargo test --features testing --test corpus -- --nocapture
+
   docs:
     name: Build docs
     runs-on: ubuntu-24.04
@@ -69,7 +135,7 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
       - name: Generate coverage
-        run: cargo llvm-cov --lcov --output-path lcov.info
+        run: cargo llvm-cov --lcov --output-path lcov.info -- --skip ui
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
         if: always()
         with:
@@ -78,11 +144,11 @@ jobs:
 
   test-results:
     if: always()
-    needs: [ test, coverage ]
+    needs: [ test, coverage, checks, msrv, corpus ]
     runs-on: ubuntu-24.04
     steps:
       - run: |
-          results=("${{ needs.test.result }}" "${{ needs.coverage.result }}")
+          results=("${{ needs.test.result }}" "${{ needs.coverage.result }}" "${{ needs.checks.result }}" "${{ needs.msrv.result }}" "${{ needs.corpus.result }}")
           for result in "${results[@]}"; do
             if [[ "$result" != "success" && "$result" != "skipped" ]]; then
               echo "One or more jobs failed" >&2
@@ -128,21 +194,19 @@ jobs:
           echo "CRATES_IO_TOKEN=$CRATES_IO_TOKEN" >> "$GITHUB_ENV"
         env:
           IDTOKEN: ${{ steps.oidc.outputs.id-token }}
-      - name: Publish configulator-derive
-        run: cargo publish -p configulator-derive
+      - name: Publish workspace
+        run: cargo publish --workspace
         env:
           CARGO_REGISTRY_TOKEN: ${{ env.CRATES_IO_TOKEN }}
       - name: Attest configulator-derive
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/tmp-crate/configulator-derive-*.crate
-      - name: Wait for crates.io index update
-        run: sleep 30
-      - name: Publish configulator-rs
-        run: cargo publish -p configulator-rs
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ env.CRATES_IO_TOKEN }}
       - name: Attest configulator-rs
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/tmp-crate/configulator-rs-*.crate
+      - name: Attest configulator-cli
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: target/package/tmp-crate/configulator-cli-*.crate
