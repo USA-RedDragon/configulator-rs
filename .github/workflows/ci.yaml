@@ -89,9 +89,7 @@ jobs:
     name: Conformance corpus (shared SPEC)
     runs-on: ubuntu-24.04
     env:
-      # The SPEC version this release is pinned to. Bumping it requires
-      # both repos green against the new corpus.
-      EXPECTED_SPEC_VERSION: 0.2.0
+      EXPECTED_SPEC_VERSION: 0.3.0
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -99,6 +97,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: USA-RedDragon/configulator
+          ref: 999f79bf403b5a02edad36334693d03c014b4109
           path: spec-repo
       - name: Verify SPEC pin
         run: |
