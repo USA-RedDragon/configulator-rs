@@ -194,7 +194,7 @@ impl<C: HasShadow> Configulator<C> {
                 &binary_name(),
             )?;
             let (matches, config_path) =
-                cli::parse(cmd, &args, config_flag.as_ref().map(|(n, _)| n.as_str()))?;
+                cli::parse(cmd, &args, config_flag.as_ref().map(|f| f.name.as_str()))?;
             let shadow = C::from_cli(&matches, "", &opts.separator)?;
             (Some(shadow), config_path, opts.separator.clone())
         } else {
@@ -303,14 +303,13 @@ impl<C: HasShadow> Configulator<C> {
     /// The --config flag (name, short), registered only when the file
     /// layer is configured.
     #[cfg(feature = "cli")]
-    fn config_flag_spec(&self) -> Option<(String, char)> {
+    fn config_flag_spec(&self) -> Option<cli::ConfigFlag> {
         #[cfg(feature = "file")]
         {
-            self.file_opts.as_ref().map(|fo| {
-                (
-                    fo.flag_name.clone().unwrap_or_else(|| "config".to_string()),
-                    fo.shorthand.unwrap_or('c'),
-                )
+            self.file_opts.as_ref().map(|fo| cli::ConfigFlag {
+                name: fo.flag_name.clone().unwrap_or_else(|| "config".to_string()),
+                short: fo.shorthand.unwrap_or('c'),
+                default: fo.paths.first().map(|p| p.display().to_string()),
             })
         }
         #[cfg(not(feature = "file"))]

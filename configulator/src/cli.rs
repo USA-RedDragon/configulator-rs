@@ -4,26 +4,36 @@ use crate::field_info::{FieldInfo, FieldType};
 /// Build the clap `Command` for a config's fields. Nested structs use the
 /// configured separator in flag names (`--database.host`). Collections
 /// and `flag = "-"` fields are skipped (SPEC rule 6).
+/// The `--config` flag: its name, shorthand, and the default shown in help.
+#[derive(Clone)]
+pub(crate) struct ConfigFlag {
+    pub name: String,
+    pub short: char,
+    pub default: Option<String>,
+}
+
 pub(crate) fn build_command(
     base: Option<clap::Command>,
     fields: &[FieldInfo],
     separator: &str,
-    config_flag: Option<(String, char)>,
+    config_flag: Option<ConfigFlag>,
     default_name: &str,
 ) -> Result<clap::Command, ConfigulatorError> {
     let mut cmd = base
         .unwrap_or_else(|| clap::Command::new(default_name.to_string()))
         .no_binary_name(true);
 
-    if let Some((name, short)) = config_flag {
-        check_free(&cmd, &name, Some(short))?;
-        cmd = cmd.arg(
-            clap::Arg::new(name.clone())
-                .short(short)
-                .long(name)
-                .help("Path to configuration file")
-                .num_args(1),
-        );
+    if let Some(flag) = config_flag {
+        check_free(&cmd, &flag.name, Some(flag.short))?;
+        let mut arg = clap::Arg::new(flag.name.clone())
+            .short(flag.short)
+            .long(flag.name)
+            .help("config file")
+            .num_args(1);
+        if let Some(default) = flag.default {
+            arg = arg.default_value(default);
+        }
+        cmd = cmd.arg(arg);
     }
 
     register_args(&mut cmd, fields, "", separator)?;
@@ -101,6 +111,12 @@ fn register_args(
         let mut arg = arg;
         if let Some(desc) = field.description {
             arg = arg.help(desc);
+        }
+        if let Some(default) = field
+            .default_value
+            .filter(|d| !d.is_empty() && !field.secret)
+        {
+            arg = arg.default_value(default);
         }
         if let Some(short) = field.short {
             arg = arg.short(short);

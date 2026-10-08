@@ -2081,3 +2081,53 @@ fn empty_env_separator_means_underscore() {
         .unwrap();
     assert_eq!(config.database.pool.size, 7);
 }
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct HelpConfig {
+    #[configulator(name = "port", default = "8080", description = "listen port")]
+    port: u16,
+    #[configulator(name = "token", secret, default = "hunter2", description = "api token")]
+    token: String,
+}
+
+impl Validate for HelpConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn help_shows_defaults_but_not_secrets() {
+    let f = yaml_file("{}\n");
+    let err = Configulator::<HelpConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--help"]))
+        .load()
+        .unwrap_err();
+    let ConfigulatorError::CLIError(e) = err else {
+        panic!("{err}");
+    };
+    let help = e.to_string();
+    assert!(help.contains("[default: 8080]"), "{help}");
+    assert!(!help.contains("hunter2"), "{help}");
+    assert!(help.contains("config file"), "{help}");
+    assert!(
+        help.contains(&format!("[default: {}]", f.path().display())),
+        "{help}"
+    );
+
+    let config = Configulator::<HelpConfig>::new()
+        .with_environment_variables(env_opts("H_"))
+        .with_env_vars(env(&[("H_PORT", "9")]))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&[]))
+        .load()
+        .unwrap();
+    assert_eq!(config.port, 9);
+}
