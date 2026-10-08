@@ -158,6 +158,18 @@ struct NcLevel {
     level: i64,
 }
 
+#[derive(Config, Debug)]
+struct Complex {
+    #[configulator(name = "z", default = "1+2i")]
+    z: configulator::Complex128,
+    #[configulator(name = "exponent")]
+    exponent: configulator::Complex128,
+    #[configulator(name = "w")]
+    w: configulator::Complex64,
+    #[configulator(name = "zs")]
+    zs: Vec<configulator::Complex128>,
+}
+
 macro_rules! ok_validate {
     ($($t:ty),*) => {
         $(impl Validate for $t {
@@ -173,7 +185,8 @@ ok_validate!(
     Collections,
     Optionals,
     Durations,
-    NestedCollections
+    NestedCollections,
+    Complex
 );
 
 trait ToJson {
@@ -261,6 +274,28 @@ impl ToJson for NestedCollections {
             "by-name": self.by_name.iter()
                 .map(|(k, p)| (k.clone(), p.to_json()))
                 .collect::<serde_json::Map<_, _>>(),
+        })
+    }
+}
+
+fn complex_json(re: f64, im: f64) -> Value {
+    let num = |v: f64| {
+        if v.fract() == 0.0 && v.abs() < 1e15 {
+            json!(v as i64)
+        } else {
+            json!(v)
+        }
+    };
+    json!([num(re), num(im)])
+}
+
+impl ToJson for Complex {
+    fn to_json(&self) -> Value {
+        json!({
+            "z": complex_json(self.z.re, self.z.im),
+            "exponent": complex_json(self.exponent.re, self.exponent.im),
+            "w": complex_json(self.w.re as f64, self.w.im as f64),
+            "zs": self.zs.iter().map(|c| complex_json(c.re, c.im)).collect::<Vec<_>>(),
         })
     }
 }
@@ -483,6 +518,7 @@ fn corpus() {
             "optionals" => check_case::<Optionals>(&case),
             "durations" => check_case::<Durations>(&case),
             "nested-collections" => check_case::<NestedCollections>(&case),
+            "complex" => check_case::<Complex>(&case),
             other => Err(format!("unknown shape {other:?}")),
         };
         ran += 1;
