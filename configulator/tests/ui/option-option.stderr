@@ -1,0 +1,6 @@
+error: Option<Option<T>> config fields are not supported
+ --> tests/ui/option-option.rs:5:5
+  |
+5 | /     #[configulator(name = "x")]
+6 | |     x: Option<Option<u16>>,
+  | |__________________________^

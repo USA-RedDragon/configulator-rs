@@ -1,15 +1,12 @@
 use configulator::{
-    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions,
-    FileOptions, Validate, serde_loader,
+    serde_loader, CLIFlagOptions, Config, Configulator, ConfigulatorError,
+    EnvironmentVariableOptions, FileOptions, Validate,
 };
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-// --- Custom type that implements FromStr ---
-
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 enum LogLevel {
     Trace,
     Debug,
@@ -18,7 +15,6 @@ enum LogLevel {
     Warn,
     Error,
 }
-
 
 impl FromStr for LogLevel {
     type Err = String;
@@ -46,12 +42,14 @@ impl fmt::Display for LogLevel {
     }
 }
 
-// --- Config structs demonstrating custom and stdlib types ---
-
-#[derive(Config, Default, Debug)]
+#[derive(Config, Debug)]
 struct ServerConfig {
     /// Bind address - string that gets validated as an IP address
-    #[configulator(name = "bind-address", default = "127.0.0.1", description = "Address to bind to")]
+    #[configulator(
+        name = "bind-address",
+        default = "127.0.0.1",
+        description = "Address to bind to"
+    )]
     bind_address: String,
 
     #[configulator(name = "port", default = "8080", description = "Listen port")]
@@ -62,22 +60,26 @@ struct ServerConfig {
     log_level: LogLevel,
 
     /// PathBuf - another stdlib type with FromStr + Default
-    #[configulator(name = "data-dir", default = "/var/lib/myapp", description = "Data directory")]
+    #[configulator(
+        name = "data-dir",
+        default = "/var/lib/myapp",
+        description = "Data directory"
+    )]
     data_dir: PathBuf,
 
     /// Vec of strings - validated as IP addresses
     #[configulator(name = "allowed-ips", default = "127.0.0.1")]
     allowed_ips: Vec<String>,
 
-    /// Nested struct - automatically detected because DbConfig derives Config
-    #[configulator(name = "database")]
+    /// Nested struct - DbConfig derives Config and is marked `nested`
+    #[configulator(name = "database", nested)]
     database: DbConfig,
 
-    #[configulator(name = "cache")]
+    #[configulator(name = "cache", nested)]
     cache: CacheConfig,
 }
 
-#[derive(Config, Default, Debug)]
+#[derive(Config, Debug)]
 struct DbConfig {
     #[configulator(name = "host", default = "localhost")]
     host: String,
@@ -88,16 +90,24 @@ struct DbConfig {
     #[configulator(name = "name", default = "myapp")]
     name: String,
 
-    #[configulator(name = "max-connections", default = "10", description = "Connection pool size")]
+    #[configulator(
+        name = "max-connections",
+        default = "10",
+        description = "Connection pool size"
+    )]
     max_connections: u32,
 }
 
-#[derive(Config, Default, Debug)]
+#[derive(Config, Debug)]
 struct CacheConfig {
     #[configulator(name = "enabled", default = "true", description = "Enable caching")]
     enabled: bool,
 
-    #[configulator(name = "ttl-seconds", default = "300", description = "Cache TTL in seconds")]
+    #[configulator(
+        name = "ttl-seconds",
+        default = "300",
+        description = "Cache TTL in seconds"
+    )]
     ttl_seconds: u64,
 }
 
@@ -117,17 +127,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Configulator::<ServerConfig>::new()
         .with_file(FileOptions {
             paths: vec!["server.yaml".into()],
-            error_if_not_found: false,
-            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
         })
         .with_environment_variables(EnvironmentVariableOptions {
-            prefix: "SERVER".into(),
+            prefix: "SERVER__".into(),
             separator: "__".into(),
         })
         .with_cli_flags(CLIFlagOptions {
             separator: ".".into(),
         })
-        .load()?;
+        .load();
+    let config = match config {
+        Ok(config) => config,
+        Err(ConfigulatorError::CLIError(e)) => e.exit(),
+        Err(e) => return Err(e.into()),
+    };
 
     println!("Server config loaded:");
     println!("  Bind:        {}:{}", config.bind_address, config.port);

@@ -1,0 +1,6 @@
+error: `env = "..."` opt-in on a collection: collections are file-only (SPEC rule 6)
+ --> tests/ui/env-optin-collection.rs:5:5
+  |
+5 | /     #[configulator(name = "tags", env = "TAGS")]
+6 | |     tags: Vec<String>,
+  | |_____________________^

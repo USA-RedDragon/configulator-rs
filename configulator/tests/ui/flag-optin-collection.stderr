@@ -1,0 +1,6 @@
+error: `flag = "..."` opt-in on a collection: collections are file-only (SPEC rule 6)
+ --> tests/ui/flag-optin-collection.rs:5:5
+  |
+5 | /     #[configulator(name = "labels", flag = "labels")]
+6 | |     labels: std::collections::HashMap<String, String>,
+  | |_____________________________________________________^

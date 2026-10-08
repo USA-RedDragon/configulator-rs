@@ -1,9 +1,9 @@
 use configulator::{
-    CLIFlagOptions, Config, Configulator, EnvironmentVariableOptions,
-    FileOptions, Validate, serde_loader,
+    serde_loader, CLIFlagOptions, Config, Configulator, ConfigulatorError,
+    EnvironmentVariableOptions, FileOptions, Validate,
 };
 
-#[derive(Config, Default, Debug)]
+#[derive(Config, Debug)]
 struct AppConfig {
     #[configulator(name = "host", default = "127.0.0.1", description = "Bind address")]
     host: String,
@@ -17,11 +17,11 @@ struct AppConfig {
     #[configulator(name = "allowed-origins", default = "localhost,example.com")]
     allowed_origins: Vec<String>,
 
-    #[configulator(name = "database")]
+    #[configulator(name = "database", nested)]
     database: DatabaseConfig,
 }
 
-#[derive(Config, Default, Debug)]
+#[derive(Config, Debug)]
 struct DatabaseConfig {
     #[configulator(name = "url", default = "postgres://localhost/mydb")]
     url: String,
@@ -46,17 +46,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Configulator::<AppConfig>::new()
         .with_file(FileOptions {
             paths: vec!["config.yaml".into(), "/etc/myapp/config.yaml".into()],
-            error_if_not_found: false,
-            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+            ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
         })
         .with_environment_variables(EnvironmentVariableOptions {
-            prefix: "MYAPP".into(),
+            prefix: "MYAPP__".into(),
             separator: "__".into(),
         })
         .with_cli_flags(CLIFlagOptions {
             separator: ".".into(),
         })
-        .load()?;
+        .load();
+    let config = match config {
+        Ok(config) => config,
+        Err(ConfigulatorError::CLIError(e)) => e.exit(),
+        Err(e) => return Err(e.into()),
+    };
 
     println!("Config loaded successfully!");
     println!("  Host:            {}", config.host);

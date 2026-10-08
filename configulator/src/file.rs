@@ -1,99 +1,78 @@
+use std::path::Path;
+
 use crate::error::ConfigulatorError;
 use crate::options::FileOptions;
-use crate::value_map::{ConfigValue, ValueMap};
+use crate::shadow::HasShadow;
 
-/// Trait for parsing file contents into configuration values.
+/// Parses file contents into a config's shadow type.
 ///
-/// Implement this for any configuration format you want to support
-/// (YAML, TOML, JSON, etc.).
-///
-/// For formats supported by [serde](https://serde.rs), use [`serde_loader`]
-/// instead of implementing this trait manually.
-pub trait FileLoader: Send + Sync {
-    /// Parse the raw file contents into configuration values.
-    fn load(&self, contents: &str) -> Result<ValueMap, ConfigulatorError>;
+/// Implement this for full control over a format; for anything
+/// serde-compatible use [`serde_loader`] instead.
+pub trait FileLoader<C: HasShadow>: Send + Sync {
+    /// Parse the raw file contents into the config's shadow.
+    fn load(&self, contents: &str) -> Result<C::Shadow, ConfigulatorError>;
 }
 
-/// A [`FileLoader`] backed by any serde-compatible deserializer.
-///
-/// Created via [`serde_loader`]. Accepts a closure that deserializes
-/// a `&str` into a [`ConfigValue`].
-pub struct SerdeLoader<F>(F);
+struct SerdeLoader<F>(F);
 
-impl<F, E> FileLoader for SerdeLoader<F>
+impl<C, F, E> FileLoader<C> for SerdeLoader<F>
 where
-    F: Fn(&str) -> Result<ConfigValue, E> + Send + Sync,
+    C: HasShadow,
+    F: Fn(&str) -> Result<C::Shadow, E> + Send + Sync,
     E: std::fmt::Display,
 {
-    fn load(&self, contents: &str) -> Result<ValueMap, ConfigulatorError> {
-        let value = (self.0)(contents)
-            .map_err(|e| ConfigulatorError::FileError(e.to_string()))?;
-        match value {
-            ConfigValue::Nested(map) => Ok(map),
-            ConfigValue::Scalar(_) => Err(ConfigulatorError::FileError(
-                "config file root must be a mapping/table, got a scalar value".into(),
-            )),
-            ConfigValue::List(_) => Err(ConfigulatorError::FileError(
-                "config file root must be a mapping/table, got a list".into(),
-            )),
-        }
+    fn load(&self, contents: &str) -> Result<C::Shadow, ConfigulatorError> {
+        (self.0)(contents).map_err(|e| ConfigulatorError::FileError(e.to_string()))
     }
 }
 
 /// Create a [`FileLoader`] from any serde-compatible deserializer.
 ///
-/// This is the easiest way to support a file format. Pass a closure
-/// that calls the format crate's `from_str` function:
+/// Pass a closure that calls the format crate's `from_str`:
 ///
-/// ```rust,no_run
-/// use configulator::{serde_loader, FileOptions};
-///
-/// let opts = FileOptions {
-///     paths: vec!["config.yaml".into()],
-///     error_if_not_found: false,
-///     // YAML
-///     loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-/// };
+/// ```rust,ignore
+/// loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
+/// loader: serde_loader(|s| toml::from_str(s)),
+/// loader: serde_loader(|s| serde_json::from_str(s)),
 /// ```
-///
-/// Works with any format: `serde_json::from_str`, `toml::from_str`, etc.
-pub fn serde_loader<F, E>(f: F) -> Box<dyn FileLoader>
+pub fn serde_loader<C, F, E>(f: F) -> Box<dyn FileLoader<C>>
 where
-    F: Fn(&str) -> Result<ConfigValue, E> + Send + Sync + 'static,
+    C: HasShadow,
+    F: Fn(&str) -> Result<C::Shadow, E> + Send + Sync + 'static,
     E: std::fmt::Display + 'static,
 {
     Box::new(SerdeLoader(f))
 }
 
-/// Load configuration from an explicitly named file (e.g. `--config <path>`).
+/// Load the file layer. Returns the parsed shadow and the display path of
+/// the file that was read, or `None` when no file matched softly.
 ///
-/// Unlike [`load_from_file`], a path the operator named must exist: any
-/// failure to read it, including the file not existing, is a hard error
-/// regardless of [`FileOptions::error_if_not_found`], and there is no
-/// fallback to [`FileOptions::paths`]. A typo'd `--config` fails
-/// loudly instead of silently booting on defaults.
-#[cfg(feature = "cli")]
-pub fn load_from_explicit(
-    opts: &FileOptions,
-    path: &std::path::Path,
-) -> Result<ValueMap, ConfigulatorError> {
-    let contents =
-        std::fs::read_to_string(path).map_err(|e| ConfigulatorError::ExplicitFileError {
-            path: path.to_path_buf(),
-            message: e.to_string(),
-        })?;
-    opts.loader.load(&contents)
-}
+/// `cli_explicit` (from `--config`) wins over `opts.explicit`; either must
+/// exist and parse, with no fallback to the search paths.
+pub(crate) fn load<C: HasShadow>(
+    opts: &FileOptions<C>,
+    cli_explicit: Option<&Path>,
+) -> Result<Option<(C::Shadow, String)>, ConfigulatorError> {
+    let explicit = cli_explicit.or(opts.explicit.as_deref());
+    if let Some(path) = explicit {
+        let contents =
+            std::fs::read_to_string(path).map_err(|e| ConfigulatorError::ExplicitFileError {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?;
+        return Ok(Some((
+            opts.loader.load(&contents)?,
+            path.display().to_string(),
+        )));
+    }
 
-/// Load configuration from the first file found in the given paths,
-/// using the loader specified in [`FileOptions`].
-pub fn load_from_file(opts: &FileOptions) -> Result<ValueMap, ConfigulatorError> {
-    let mut contents = None;
     for path in &opts.paths {
         match std::fs::read_to_string(path) {
-            Ok(data) => {
-                contents = Some(data);
-                break;
+            Ok(contents) => {
+                return Ok(Some((
+                    opts.loader.load(&contents)?,
+                    path.display().to_string(),
+                )));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
@@ -105,15 +84,8 @@ pub fn load_from_file(opts: &FileOptions) -> Result<ValueMap, ConfigulatorError>
         }
     }
 
-    let contents = match contents {
-        Some(c) => c,
-        None => {
-            if opts.error_if_not_found {
-                return Err(ConfigulatorError::FileNotFound);
-            }
-            return Ok(ValueMap::new());
-        }
-    };
-
-    opts.loader.load(&contents)
+    if opts.error_if_not_found {
+        return Err(ConfigulatorError::FileNotFound);
+    }
+    Ok(None)
 }

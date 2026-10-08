@@ -1,1539 +1,1183 @@
-#[cfg(test)]
-mod tests {
-    use configulator::*;
-    #[cfg(feature = "file")]
-    use std::io::Write;
-    #[cfg(feature = "file")]
-    use std::path::PathBuf;
+#![cfg(all(feature = "file", feature = "cli", feature = "env"))]
 
-    // ---- Test structs ----
+use std::collections::HashMap;
+use std::io::Write;
 
-    #[derive(Config, Default, Debug, PartialEq)]
-    struct SimpleConfig {
-        #[configulator(name = "host", default = "127.0.0.1", description = "Bind address")]
+use configulator::{
+    serde_loader, CLIFlagOptions, Config, Configulator, ConfigulatorError, Duration,
+    EnvironmentVariableOptions, FileOptions, Layer, Validate,
+};
+
+#[derive(Config, Debug, PartialEq)]
+struct SimpleConfig {
+    #[configulator(name = "host", default = "127.0.0.1", description = "Bind address")]
+    host: String,
+
+    #[configulator(name = "port", default = "8080", description = "Listen port")]
+    port: u16,
+
+    #[configulator(name = "debug", default = "false", description = "Debug mode")]
+    debug: bool,
+}
+
+impl Validate for SimpleConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.port == 0 {
+            return Err("port must be non-zero".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct NestedConfig {
+    #[configulator(name = "app-name", default = "myapp")]
+    app_name: String,
+
+    #[configulator(name = "database", nested)]
+    database: DatabaseConfig,
+}
+
+impl Validate for NestedConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct DatabaseConfig {
+    #[configulator(name = "url", default = "postgres://localhost/db")]
+    url: String,
+
+    #[configulator(name = "max-connections", default = "10")]
+    max_connections: u32,
+
+    #[configulator(name = "pool", nested)]
+    pool: PoolConfig,
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct PoolConfig {
+    #[configulator(name = "size", default = "5")]
+    size: u16,
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct ListConfig {
+    #[configulator(name = "tags", default = "a,b,c")]
+    tags: Vec<String>,
+
+    #[configulator(name = "ports")]
+    ports: Vec<u16>,
+}
+
+impl Validate for ListConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct CollectionsConfig {
+    #[configulator(name = "labels")]
+    labels: HashMap<String, String>,
+
+    #[configulator(name = "servers", nested)]
+    servers: Vec<ServerConfig>,
+
+    #[configulator(name = "pools", nested)]
+    pools: HashMap<String, PoolConfig>,
+}
+
+impl Validate for CollectionsConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct ServerConfig {
+    #[configulator(name = "addr")]
+    addr: String,
+
+    #[configulator(name = "weight", default = "1")]
+    weight: u16,
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct OptionalsConfig {
+    #[configulator(name = "port")]
+    port: Option<u16>,
+
+    #[configulator(name = "name", default = "opt-name")]
+    name: Option<String>,
+
+    #[configulator(name = "tls", nested)]
+    tls: Option<TlsConfig>,
+}
+
+impl Validate for OptionalsConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct TlsConfig {
+    #[configulator(name = "cert")]
+    cert: String,
+
+    #[configulator(name = "min-version", default = "12")]
+    min_version: u16,
+}
+
+#[derive(Debug, Default, PartialEq, Clone)]
+enum LogLevel {
+    #[default]
+    Info,
+    Debug,
+}
+
+impl std::str::FromStr for LogLevel {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "info" => Ok(Self::Info),
+            "debug" => Ok(Self::Debug),
+            other => Err(format!("bad log level: {other}")),
+        }
+    }
+}
+
+fn yaml_file(contents: &str) -> tempfile::NamedTempFile {
+    let mut f = tempfile::NamedTempFile::new().unwrap();
+    f.write_all(contents.as_bytes()).unwrap();
+    f.flush().unwrap();
+    f
+}
+
+fn yaml_opts<C: configulator::HasShadow>(path: &std::path::Path) -> FileOptions<C>
+where
+    C::Shadow: for<'de> serde::Deserialize<'de>,
+{
+    FileOptions {
+        paths: vec![path.to_path_buf()],
+        ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
+    }
+}
+
+fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+fn args(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+fn env_opts(prefix: &str) -> EnvironmentVariableOptions {
+    EnvironmentVariableOptions {
+        prefix: prefix.to_string(),
+        separator: "_".to_string(),
+    }
+}
+
+#[test]
+fn defaults_scalars() {
+    let config = Configulator::<SimpleConfig>::new().load().unwrap();
+    assert_eq!(config.host, "127.0.0.1");
+    assert_eq!(config.port, 8080);
+    assert!(!config.debug);
+}
+
+#[test]
+fn defaults_nested() {
+    let config = Configulator::<NestedConfig>::new()
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.app_name, "myapp");
+    assert_eq!(config.database.url, "postgres://localhost/db");
+    assert_eq!(config.database.max_connections, 10);
+    assert_eq!(config.database.pool.size, 5);
+}
+
+#[test]
+fn defaults_list_and_optionals() {
+    let config = Configulator::<ListConfig>::new().load().unwrap();
+    assert_eq!(config.tags, vec!["a", "b", "c"]);
+    assert!(config.ports.is_empty());
+
+    let config = Configulator::<OptionalsConfig>::new().load().unwrap();
+    assert_eq!(config.port, None);
+    assert_eq!(config.name.as_deref(), Some("opt-name"));
+    assert_eq!(config.tls, None);
+}
+
+#[test]
+fn defaults_only_constructor() {
+    let config = Configulator::<SimpleConfig>::defaults_only().unwrap();
+    assert_eq!(config.port, 8080);
+}
+
+#[test]
+fn defaults_report_origins() {
+    let (_, report) = Configulator::<SimpleConfig>::new()
+        .load_with_report()
+        .unwrap();
+    let origin = report.origin("port").unwrap();
+    assert_eq!(origin.layer, Layer::Default);
+    assert_eq!(origin.detail, "default");
+}
+
+#[test]
+fn validation_runs_on_load() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--port", "0"]))
+        .load()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::ValidationError(_)));
+
+    let ok = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--port", "0"]))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(ok.port, 0);
+}
+
+#[test]
+fn file_yaml_basic_and_report() {
+    let f = yaml_file("host: example.com\nport: 9090\n");
+    let (config, report) = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.host, "example.com");
+    assert_eq!(config.port, 9090);
+    assert!(!config.debug);
+    assert_eq!(report.origin("port").unwrap().layer, Layer::File);
+    assert_eq!(report.file().unwrap(), f.path().display().to_string());
+}
+
+#[test]
+fn file_quoted_numbers_parse() {
+    let f = yaml_file("port: \"9999\"\n");
+    let config = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(config.port, 9999);
+}
+
+#[test]
+fn file_null_is_absent() {
+    let f = yaml_file("port: ~\nhost: kept\n");
+    let config = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(config.port, 8080, "null keeps the default");
+    assert_eq!(config.host, "kept");
+}
+
+#[test]
+fn file_unknown_key_rejected() {
+    let f = yaml_file("nope: 1\n");
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::FileError(msg) => assert!(msg.contains("nope"), "got: {msg}"),
+        other => panic!("expected FileError, got {other:?}"),
+    }
+}
+
+#[test]
+fn file_parse_error_names_field() {
+    let f = yaml_file("port: not-a-number\n");
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::FileError(msg) => assert!(msg.contains("port"), "got: {msg}"),
+        other => panic!("expected FileError, got {other:?}"),
+    }
+}
+
+#[test]
+fn file_nested_deep_merge() {
+    let f = yaml_file("database:\n  pool:\n    size: 99\n");
+    let config = Configulator::<NestedConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.database.pool.size, 99);
+    assert_eq!(
+        config.database.url, "postgres://localhost/db",
+        "sibling default survives"
+    );
+}
+
+#[test]
+fn file_not_found_soft_and_hard() {
+    let config = Configulator::<SimpleConfig>::new()
+        .with_file(FileOptions {
+            paths: vec!["/nonexistent/config.yaml".into()],
+            ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
+        })
+        .load()
+        .unwrap();
+    assert_eq!(config.port, 8080, "soft miss boots on defaults");
+
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(FileOptions {
+            paths: vec!["/nonexistent/config.yaml".into()],
+            error_if_not_found: true,
+            ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
+        })
+        .load()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::FileNotFound));
+}
+
+#[test]
+fn file_explicit_must_exist_no_fallback() {
+    let good = yaml_file("host: from-search\n");
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(FileOptions {
+            paths: vec![good.path().to_path_buf()],
+            explicit: Some("/nonexistent/app.yaml".into()),
+            ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
+        })
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::ExplicitFileError { path, .. } => {
+            assert_eq!(path, std::path::PathBuf::from("/nonexistent/app.yaml"));
+        }
+        other => panic!("expected ExplicitFileError, got {other:?}"),
+    }
+}
+
+#[test]
+fn file_config_flag_is_explicit() {
+    let good = yaml_file("host: from-search\n");
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts::<SimpleConfig>(good.path()))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--config", "/nonexistent/app.yaml"]))
+        .load()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::ExplicitFileError { .. }));
+
+    let cli_file = yaml_file("host: from-cli-file\n");
+    let config = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts::<SimpleConfig>(good.path()))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--config", &cli_file.path().display().to_string()]))
+        .load()
+        .unwrap();
+    assert_eq!(config.host, "from-cli-file");
+}
+
+#[test]
+fn file_collections() {
+    let f = yaml_file(
+        "labels:\n  team: infra\nservers:\n  - addr: a:1\n  - addr: b:2\n    weight: 5\npools:\n  primary: {}\n",
+    );
+    let (config, report) = Configulator::<CollectionsConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.labels["team"], "infra");
+    assert_eq!(config.servers.len(), 2);
+    assert_eq!(config.servers[0].weight, 1, "element default");
+    assert_eq!(config.servers[1].weight, 5);
+    assert_eq!(config.pools["primary"].size, 5, "map element default");
+
+    assert_eq!(report.origin("servers[0].addr").unwrap().layer, Layer::File);
+    let elem_default = report.origin("servers[0].weight").unwrap();
+    assert_eq!(elem_default.layer, Layer::Default);
+    assert_eq!(elem_default.detail, "element default");
+    assert_eq!(
+        report.origin("pools.primary.size").unwrap().detail,
+        "element default"
+    );
+}
+
+#[test]
+fn file_optional_struct_allocated_with_element_defaults() {
+    let f = yaml_file("tls:\n  cert: c.pem\n");
+    let config = Configulator::<OptionalsConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    let tls = config.tls.expect("tls allocated by file layer");
+    assert_eq!(tls.cert, "c.pem");
+    assert_eq!(tls.min_version, 12, "field default applies on allocation");
+}
+
+#[test]
+fn file_custom_fromstr_leaf() {
+    #[derive(Config, Debug)]
+    struct LevelConfig {
+        #[configulator(name = "level", default = "info")]
+        level: LogLevel,
+    }
+    impl Validate for LevelConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    let f = yaml_file("level: debug\n");
+    let config = Configulator::<LevelConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(config.level, LogLevel::Debug);
+
+    let f = yaml_file("level: nope\n");
+    let err = Configulator::<LevelConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::FileError(msg) => {
+            assert!(msg.contains("bad log level"), "got: {msg}");
+            assert!(msg.contains("level"), "field name in error: {msg}");
+        }
+        other => panic!("expected FileError, got {other:?}"),
+    }
+}
+
+#[test]
+fn env_basic_and_nested_naming() {
+    let (config, report) = Configulator::<NestedConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[
+            ("APP_APP_NAME", "from-env"),
+            ("APP_DATABASE_POOL_SIZE", "42"),
+        ]))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.app_name, "from-env", "dash folds to underscore");
+    assert_eq!(config.database.pool.size, 42);
+    let origin = report.origin("database.pool.size").unwrap();
+    assert_eq!(origin.layer, Layer::Env);
+    assert_eq!(origin.detail, "APP_DATABASE_POOL_SIZE");
+}
+
+#[test]
+fn env_prefix_is_verbatim() {
+    let config = Configulator::<SimpleConfig>::new()
+        .with_environment_variables(env_opts("X"))
+        .with_env_vars(env(&[("XHOST", "glued")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.host, "glued");
+}
+
+#[test]
+fn env_empty_string_is_a_value() {
+    let config = Configulator::<SimpleConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_HOST", "")]))
+        .load()
+        .unwrap();
+    assert_eq!(
+        config.host, "",
+        "present but empty is the empty string, not the default"
+    );
+}
+
+#[test]
+fn env_list_no_trimming() {
+    let config = Configulator::<ListConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_TAGS", "p, q")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.tags, vec!["p", " q"], "no trimming (SPEC)");
+}
+
+#[test]
+fn env_array_separator() {
+    let config = Configulator::<ListConfig>::new()
+        .with_array_separator(";")
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_TAGS", "x;y")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.tags, vec!["x", "y"]);
+
+    #[derive(Config, Debug)]
+    struct SepConfig {
+        #[configulator(name = "vals", default = "1;2;3")]
+        vals: Vec<u16>,
+    }
+    impl Validate for SepConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+    let config = Configulator::<SepConfig>::new()
+        .with_array_separator(";")
+        .load()
+        .unwrap();
+    assert_eq!(config.vals, vec![1, 2, 3]);
+}
+
+#[test]
+fn env_parse_error_names_var() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_PORT", "lots")]))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::ParseError { field, value, .. } => {
+            assert_eq!(field, "APP_PORT");
+            assert_eq!(value, "lots");
+        }
+        other => panic!("expected ParseError, got {other:?}"),
+    }
+}
+
+#[test]
+fn env_bad_options() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_environment_variables(env_opts("app_"))
+        .load()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::BadEnvOptions(_)));
+
+    let err = Configulator::<SimpleConfig>::new()
+        .with_environment_variables(EnvironmentVariableOptions {
+            prefix: "APP".into(),
+            separator: "-".into(),
+        })
+        .load()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::BadEnvOptions(_)));
+}
+
+#[test]
+fn env_override_and_skip() {
+    #[derive(Config, Debug)]
+    #[allow(dead_code)]
+    struct EnvAttrConfig {
+        #[configulator(name = "host", env = "HOSTNAME_OVERRIDE")]
         host: String,
 
-        #[configulator(name = "port", default = "8080", description = "Listen port")]
+        #[configulator(name = "internal", env = "-", default = "hidden")]
+        internal: String,
+    }
+    impl Validate for EnvAttrConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    let (config, report) = Configulator::<EnvAttrConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[
+            ("APP_HOSTNAME_OVERRIDE", "from-override"),
+            ("APP_INTERNAL", "should-be-ignored"),
+        ]))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.host, "from-override");
+    assert_eq!(config.internal, "hidden", "env = \"-\" skips the env layer");
+    assert_eq!(
+        report.origin("host").unwrap().detail,
+        "APP_HOSTNAME_OVERRIDE"
+    );
+}
+
+#[test]
+fn env_optionals() {
+    let config = Configulator::<OptionalsConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_PORT", "123"), ("APP_TLS_CERT", "e.pem")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.port, Some(123));
+    let tls = config.tls.expect("env allocates the optional struct");
+    assert_eq!(tls.cert, "e.pem");
+    assert_eq!(tls.min_version, 12);
+}
+
+#[test]
+fn env_untouched_optional_struct_stays_none() {
+    let config = Configulator::<OptionalsConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_PORT", "123")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.tls, None, "no tls var set: stays None");
+}
+
+#[test]
+fn cli_flags_scalars_and_bool() {
+    let config = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--host", "cli.example", "--debug"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.host, "cli.example");
+    assert!(config.debug, "bare --debug sets true");
+
+    let config = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--debug", "false"]))
+        .load()
+        .unwrap();
+    assert!(!config.debug, "--debug false sets false");
+}
+
+#[test]
+fn cli_nested_and_report() {
+    let (config, report) = Configulator::<NestedConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--database.pool.size", "77"]))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.database.pool.size, 77);
+    let origin = report.origin("database.pool.size").unwrap();
+    assert_eq!(origin.layer, Layer::Cli);
+    assert_eq!(origin.detail, "--database.pool.size");
+}
+
+#[test]
+fn cli_list_repeated() {
+    let config = Configulator::<ListConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--ports", "80", "--ports", "443"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.ports, vec![80, 443]);
+}
+
+#[test]
+fn cli_unknown_flag_errors() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--nope", "1"]))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::CLIError(e) => {
+            assert_eq!(e.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
+        other => panic!("expected CLIError, got {other:?}"),
+    }
+}
+
+#[test]
+fn cli_help_passes_through_as_clap_error() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--help"]))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::CLIError(e) => {
+            assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp);
+            let rendered = e.to_string();
+            assert!(rendered.contains("--port"), "help lists flags: {rendered}");
+        }
+        other => panic!("expected CLIError, got {other:?}"),
+    }
+}
+
+#[test]
+fn cli_parse_error_names_flag() {
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--port", "lots"]))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::ParseError { field, .. } => assert_eq!(field, "--port"),
+        other => panic!("expected ParseError, got {other:?}"),
+    }
+}
+
+#[test]
+fn cli_short_flag() {
+    #[derive(Config, Debug)]
+    struct ShortConfig {
+        #[configulator(name = "port", default = "1", short = 'p')]
+        port: u16,
+    }
+    impl Validate for ShortConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+    let config = Configulator::<ShortConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["-p", "99"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.port, 99);
+}
+
+#[test]
+fn cli_flag_override_and_skip() {
+    #[derive(Config, Debug)]
+    #[allow(dead_code)]
+    struct FlagAttrConfig {
+        #[configulator(name = "host", flag = "hostname")]
+        host: String,
+
+        #[configulator(name = "internal", flag = "-", default = "hidden")]
+        internal: String,
+    }
+    impl Validate for FlagAttrConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+    let config = Configulator::<FlagAttrConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--hostname", "renamed"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.host, "renamed");
+
+    let err = Configulator::<FlagAttrConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--internal", "x"]))
+        .load()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::CLIError(_)),
+        "flag = \"-\" unregisters the flag"
+    );
+}
+
+#[test]
+fn cli_custom_command() {
+    let config = Configulator::<SimpleConfig>::new()
+        .with_cli_command(clap::Command::new("myapp").version("1.0"))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--port", "1234"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.port, 1234);
+}
+
+#[test]
+fn precedence_defaults_file_env_cli() {
+    let f = yaml_file("host: from-file\nport: 1000\n");
+    let (config, report) = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_PORT", "2000"), ("APP_DEBUG", "true")]))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--port", "3000"]))
+        .load_with_report()
+        .unwrap();
+    assert_eq!(config.host, "from-file", "file beats default");
+    assert!(config.debug, "env beats file");
+    assert_eq!(config.port, 3000, "cli beats env");
+    assert_eq!(report.origin("port").unwrap().layer, Layer::Cli);
+    assert_eq!(report.origin("host").unwrap().layer, Layer::File);
+    assert_eq!(report.origin("debug").unwrap().layer, Layer::Env);
+}
+
+#[test]
+fn precedence_deep_merge_across_layers() {
+    let f = yaml_file("database:\n  url: postgres://file/db\n");
+    let config = Configulator::<NestedConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_DATABASE_MAX_CONNECTIONS", "50")]))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--database.pool.size", "7"]))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.database.url, "postgres://file/db");
+    assert_eq!(config.database.max_connections, 50);
+    assert_eq!(config.database.pool.size, 7);
+}
+
+#[test]
+fn list_replaces_wholesale() {
+    let f = yaml_file("tags: [x, y, z]\n");
+    let config = Configulator::<ListConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_TAGS", "p,q")]))
+        .load()
+        .unwrap();
+    assert_eq!(
+        config.tags,
+        vec!["p", "q"],
+        "env list replaces file list wholesale"
+    );
+}
+
+#[test]
+fn required_field() {
+    #[derive(Config, Debug)]
+    struct RequiredConfig {
+        #[configulator(name = "token", required)]
+        token: String,
+    }
+    impl Validate for RequiredConfig {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+    let err = Configulator::<RequiredConfig>::new().load().unwrap_err();
+    match err {
+        ConfigulatorError::Required { path } => assert_eq!(path, "token"),
+        other => panic!("expected Required, got {other:?}"),
+    }
+
+    let config = Configulator::<RequiredConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_TOKEN", "sekrit")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.token, "sekrit");
+}
+
+#[test]
+fn secret_redacted_in_errors_and_print() {
+    #[derive(Config, Debug)]
+    #[allow(dead_code)]
+    struct SecretConfig {
+        #[configulator(name = "api-key", secret, default = "topsecret")]
+        api_key: String,
+
+        #[configulator(name = "port", default = "8080")]
         port: u16,
 
-        #[configulator(name = "debug", default = "false", description = "Debug mode")]
-        debug: bool,
+        #[configulator(name = "burst", secret, default = "1")]
+        burst: u16,
     }
-
-    impl Validate for SimpleConfig {
-        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            if self.port == 0 {
-                return Err("port must be non-zero".into());
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Config, Default, Debug, PartialEq)]
-    struct NestedConfig {
-        #[configulator(name = "app-name", default = "myapp")]
-        app_name: String,
-
-        #[configulator(name = "database")]
-        database: DatabaseConfig,
-    }
-
-    impl Validate for NestedConfig {
+    impl Validate for SecretConfig {
         fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(())
         }
     }
 
-    #[derive(Config, Default, Debug, PartialEq)]
-    struct DatabaseConfig {
-        #[configulator(name = "url", default = "postgres://localhost/db")]
-        url: String,
+    let printed = Configulator::<SecretConfig>::defaults_only()
+        .unwrap()
+        .print_config();
+    assert!(printed.contains("api-key = (redacted)"), "got: {printed}");
+    assert!(printed.contains("port = 8080"), "got: {printed}");
+    assert!(!printed.contains("topsecret"), "got: {printed}");
 
-        #[configulator(name = "max-connections", default = "10")]
-        max_connections: u32,
+    let err = Configulator::<SecretConfig>::new()
+        .with_environment_variables(env_opts("APP_"))
+        .with_env_vars(env(&[("APP_BURST", "not-a-number")]))
+        .load()
+        .unwrap_err();
+    match err {
+        ConfigulatorError::ParseError { value, .. } => assert_eq!(value, "(redacted)"),
+        other => panic!("expected ParseError, got {other:?}"),
     }
+}
 
-    #[derive(Config, Default, Debug, PartialEq)]
-    struct ListConfig {
-        #[configulator(name = "tags", default = "a,b,c")]
-        tags: Vec<String>,
+#[test]
+fn print_config_nested_and_collections() {
+    let f = yaml_file("labels:\n  team: infra\nservers:\n  - addr: a:1\n");
+    let config = Configulator::<CollectionsConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    let printed = config.print_config();
+    assert!(
+        printed.contains("labels.team = \"infra\""),
+        "got: {printed}"
+    );
+    assert!(
+        printed.contains("servers[0].addr = \"a:1\""),
+        "got: {printed}"
+    );
+    assert!(printed.contains("servers[0].weight = 1"), "got: {printed}");
+    assert!(printed.contains("pools = {}"), "got: {printed}");
+}
 
-        #[configulator(name = "ports")]
-        ports: Vec<u16>,
+#[test]
+fn duration_field() {
+    #[derive(Config, Debug)]
+    struct DurationConfig {
+        #[configulator(name = "timeout", default = "30s")]
+        timeout: Duration,
     }
-
-    impl Validate for ListConfig {
+    impl Validate for DurationConfig {
         fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(())
         }
     }
-
-    // ---- Helpers for safe env var manipulation ----
-
-    /// SAFETY: Tests that use env vars must run serially (not in parallel with
-    /// other tests that read/write the same env vars). In practice this is
-    /// acceptable for integration tests in a dedicated test binary.
-    unsafe fn set_env(key: &str, val: &str) {
-        unsafe { std::env::set_var(key, val) };
-    }
-
-    unsafe fn remove_env(key: &str) {
-        unsafe { std::env::remove_var(key) };
-    }
-
-    // ---- Tests ----
-
-    #[test]
-    fn test_defaults_only() {
-        let config = Configulator::<SimpleConfig>::new()
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 8080);
-        assert!(!config.debug);
-    }
-
-    #[test]
-    fn test_defaults_nested() {
-        let config = Configulator::<NestedConfig>::new()
-            .load_without_validation()
-            .unwrap();
-
-        assert_eq!(config.app_name, "myapp");
-        assert_eq!(config.database.url, "postgres://localhost/db");
-        assert_eq!(config.database.max_connections, 10);
-    }
-
-    #[test]
-    fn test_defaults_list() {
-        let config = Configulator::<ListConfig>::new()
-            .load()
-            .unwrap();
-
-        assert_eq!(config.tags, vec!["a", "b", "c"]);
-        assert!(config.ports.is_empty());
-    }
-
-    #[test]
-    fn test_validation_passes() {
-        let result = Configulator::<SimpleConfig>::new().load();
-        assert!(result.is_ok());
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_validation_fails() {
-        // port=0 should fail validation
-        let result = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--port".into(), "0".into()])
-            .load();
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("port must be non-zero"));
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_load_without_validation_skips_check() {
-        let result = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--port".into(), "0".into()])
-            .load_without_validation();
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().port, 0);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_yaml_file_loading() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: 0.0.0.0").unwrap();
-        writeln!(f, "port: 3000").unwrap();
-        writeln!(f, "debug: true").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "0.0.0.0");
-        assert_eq!(config.port, 3000);
-        assert!(config.debug);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_yaml_file_nested() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "app-name: production").unwrap();
-        writeln!(f, "database:").unwrap();
-        writeln!(f, "  url: postgres://prod/db").unwrap();
-        writeln!(f, "  max-connections: 50").unwrap();
-
-        let config = Configulator::<NestedConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.app_name, "production");
-        assert_eq!(config.database.url, "postgres://prod/db");
-        assert_eq!(config.database.max_connections, 50);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_yaml_file_not_found_no_error() {
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![PathBuf::from("/nonexistent/config.yaml")],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        // Falls back to defaults
-        assert_eq!(config.host, "127.0.0.1");
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_yaml_file_not_found_error() {
-        let result = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![PathBuf::from("/nonexistent/config.yaml")],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load();
-
-        assert!(result.is_err());
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_yaml_file_first_found_wins() {
-        let dir = tempfile::tempdir().unwrap();
-        let file1 = dir.path().join("first.yaml");
-        let file2 = dir.path().join("second.yaml");
-
-        let mut f1 = std::fs::File::create(&file1).unwrap();
-        writeln!(f1, "port: 1111").unwrap();
-
-        let mut f2 = std::fs::File::create(&file2).unwrap();
-        writeln!(f2, "port: 2222").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file1.to_path_buf(), file2.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.port, 1111);
-    }
-
-    #[cfg(feature = "env")]
-    #[test]
-    fn test_env_vars() {
-        // SAFETY: No other test uses the TEST1_ prefix concurrently.
-        unsafe {
-            set_env("TEST1_HOST", "envhost");
-            set_env("TEST1_PORT", "9090");
-            set_env("TEST1_DEBUG", "true");
-        }
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "TEST1".into(),
-                separator: "_".into(),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "envhost");
-        assert_eq!(config.port, 9090);
-        assert!(config.debug);
-
-        // Cleanup
-        unsafe {
-            remove_env("TEST1_HOST");
-            remove_env("TEST1_PORT");
-            remove_env("TEST1_DEBUG");
-        }
-    }
-
-    #[cfg(feature = "env")]
-    #[test]
-    fn test_env_vars_nested() {
-        // SAFETY: No other test uses the TEST2__ prefix concurrently.
-        unsafe {
-            set_env("TEST2__APP_NAME", "envapp");
-            set_env("TEST2__DATABASE__URL", "postgres://env/db");
-            set_env("TEST2__DATABASE__MAX_CONNECTIONS", "25");
-        }
-
-        let config = Configulator::<NestedConfig>::new()
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "TEST2".into(),
-                separator: "__".into(),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.app_name, "envapp");
-        assert_eq!(config.database.url, "postgres://env/db");
-        assert_eq!(config.database.max_connections, 25);
-
-        unsafe {
-            remove_env("TEST2__APP_NAME");
-            remove_env("TEST2__DATABASE__URL");
-            remove_env("TEST2__DATABASE__MAX_CONNECTIONS");
-        }
-    }
-
-    #[cfg(feature = "env")]
-    #[test]
-    fn test_env_vars_list() {
-        // SAFETY: No other test uses the TEST3_ prefix concurrently.
-        unsafe {
-            set_env("TEST3_TAGS", "x,y,z");
-            set_env("TEST3_PORTS", "80,443");
-        }
-
-        let config = Configulator::<ListConfig>::new()
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "TEST3".into(),
-                separator: "_".into(),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.tags, vec!["x", "y", "z"]);
-        assert_eq!(config.ports, vec![80, 443]);
-
-        unsafe {
-            remove_env("TEST3_TAGS");
-            remove_env("TEST3_PORTS");
-        }
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_flags_simple() {
-        let config = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--host".into(), "clihost".into(),
-                "--port".into(), "4444".into(),
-                "--debug".into(),
-            ])
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "clihost");
-        assert_eq!(config.port, 4444);
-        assert!(config.debug);
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_flags_nested() {
-        let config = Configulator::<NestedConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--app-name".into(), "cliflag-app".into(),
-                "--database.url".into(), "postgres://cli/db".into(),
-                "--database.max-connections".into(), "99".into(),
-            ])
-            .load()
-            .unwrap();
-
-        assert_eq!(config.app_name, "cliflag-app");
-        assert_eq!(config.database.url, "postgres://cli/db");
-        assert_eq!(config.database.max_connections, 99);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_precedence_file_over_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "port: 5555").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        // port from file, host from default
-        assert_eq!(config.port, 5555);
-        assert_eq!(config.host, "127.0.0.1");
-    }
-
-    #[cfg(all(feature = "file", feature = "env"))]
-    #[test]
-    fn test_precedence_env_over_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: filehost").unwrap();
-        writeln!(f, "port: 5555").unwrap();
-
-        // SAFETY: No other test uses the TEST4_ prefix concurrently.
-        unsafe { set_env("TEST4_PORT", "7777") };
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "TEST4".into(),
-                separator: "_".into(),
-            })
-            .load()
-            .unwrap();
-
-        // host from file, port overridden by env
-        assert_eq!(config.host, "filehost");
-        assert_eq!(config.port, 7777);
-
-        unsafe { remove_env("TEST4_PORT") };
-    }
-
-    #[cfg(all(feature = "file", feature = "env", feature = "cli"))]
-    #[test]
-    fn test_precedence_cli_over_all() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: filehost").unwrap();
-        writeln!(f, "port: 5555").unwrap();
-
-        // SAFETY: No other test uses the TEST5_ prefix concurrently.
-        unsafe { set_env("TEST5_PORT", "7777") };
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "TEST5".into(),
-                separator: "_".into(),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--port".into(), "9999".into()])
-            .load()
-            .unwrap();
-
-        // host from file, port overridden by CLI (highest precedence)
-        assert_eq!(config.host, "filehost");
-        assert_eq!(config.port, 9999);
-
-        unsafe { remove_env("TEST5_PORT") };
-    }
-
-    #[test]
-    fn test_config_fields_metadata() {
-        let fields = SimpleConfig::configulator_fields();
-        assert_eq!(fields.len(), 3);
-
-        assert_eq!(fields[0].config_name, "host");
-        assert_eq!(fields[0].default_value, Some("127.0.0.1"));
-        assert_eq!(fields[0].field_type, FieldType::Scalar);
-
-        assert_eq!(fields[1].config_name, "port");
-        assert_eq!(fields[1].field_type, FieldType::Scalar);
-
-        assert_eq!(fields[2].config_name, "debug");
-        assert_eq!(fields[2].field_type, FieldType::Bool);
-    }
-
-    #[test]
-    fn test_config_fields_nested_metadata() {
-        let fields = NestedConfig::configulator_fields();
-        assert_eq!(fields.len(), 2);
-
-        assert_eq!(fields[0].config_name, "app-name");
-        assert_eq!(fields[0].field_type, FieldType::Scalar);
-
-        if let FieldType::Struct(sub) = &fields[1].field_type {
-            assert_eq!(sub.len(), 2);
-            assert_eq!(sub[0].config_name, "url");
-            assert_eq!(sub[1].config_name, "max-connections");
-        } else {
-            panic!("Expected database field to be Struct type");
-        }
-    }
-
-    #[test]
-    fn test_from_value_map_directly() {
-        let mut map = ValueMap::new();
-        map.insert("host".into(), ConfigValue::Scalar("direct".into()));
-        map.insert("port".into(), ConfigValue::Scalar("1234".into()));
-        map.insert("debug".into(), ConfigValue::Scalar("true".into()));
-
-        let config = SimpleConfig::from_value_map(&map).unwrap();
-        assert_eq!(config.host, "direct");
-        assert_eq!(config.port, 1234);
-        assert!(config.debug);
-    }
-
-    #[test]
-    fn test_parse_error_bad_type() {
-        let mut map = ValueMap::new();
-        map.insert("host".into(), ConfigValue::Scalar("ok".into()));
-        map.insert("port".into(), ConfigValue::Scalar("not_a_number".into()));
-
-        let result = SimpleConfig::from_value_map(&map);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("port"));
-        assert!(err.to_string().contains("not_a_number"));
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_yaml_list_field() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "tags:").unwrap();
-        writeln!(f, "  - alpha").unwrap();
-        writeln!(f, "  - beta").unwrap();
-        writeln!(f, "ports:").unwrap();
-        writeln!(f, "  - 80").unwrap();
-        writeln!(f, "  - 443").unwrap();
-
-        let config = Configulator::<ListConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.tags, vec!["alpha", "beta"]);
-        assert_eq!(config.ports, vec![80, 443]);
-    }
-
-    #[test]
-    fn test_defaults_only_method() {
-        let config = Configulator::<SimpleConfig>::defaults_only()
-            .unwrap();
-
-        assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 8080);
-        assert!(!config.debug);
-    }
-
-    #[test]
-    fn test_no_configulator_attr_uses_field_name() {
-        #[derive(Config, Default, Debug, PartialEq)]
-        struct Bare {
-            my_field: String,
-            count: u32,
-        }
-
-        let fields = Bare::configulator_fields();
-        assert_eq!(fields[0].config_name, "my_field");
-        assert_eq!(fields[1].config_name, "count");
-    }
-
-    #[cfg(all(feature = "file", feature = "cli"))]
-    #[test]
-    fn test_cli_config_flag() {
-        // When with_file is called first, --config / -c gets registered
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: from-cli-config").unwrap();
-        writeln!(f, "port: 6060").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--config".into(),
-                file_path.to_string_lossy().to_string(),
-            ])
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "from-cli-config");
-        assert_eq!(config.port, 6060);
-    }
-
-    #[cfg(feature = "env")]
-    #[test]
-    fn test_env_dashes_to_underscores() {
-        // config name "app-name" should become env var PREFIX_APP_NAME
-        // SAFETY: No other test uses the TEST6_ prefix concurrently.
-        unsafe { set_env("TEST6_APP_NAME", "dashed") };
-
-        let config = Configulator::<NestedConfig>::new()
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "TEST6".into(),
-                separator: "_".into(),
-            })
-            .load_without_validation()
-            .unwrap();
-
-        assert_eq!(config.app_name, "dashed");
-
-        unsafe { remove_env("TEST6_APP_NAME") };
-    }
-
-    #[test]
-    fn test_missing_fields_use_default() {
-        // Only set some values, others should be defaults
-        let mut map = ValueMap::new();
-        map.insert("host".into(), ConfigValue::Scalar("partial".into()));
-
-        let config = SimpleConfig::from_value_map(&map).unwrap();
-        assert_eq!(config.host, "partial");
-        assert_eq!(config.port, 0); // Default::default() for u16
-        assert!(!config.debug);    // Default::default() for bool
-    }
-
-    // ---- Phase 1: error.rs Display/Error + options.rs Debug ----
-
-    #[test]
-    fn test_error_display_parse_error() {
-        let err = ConfigulatorError::ParseError {
-            field: "port".into(),
-            value: "abc".into(),
-            message: "invalid digit".into(),
-        };
-        let msg = err.to_string();
-        assert!(msg.contains("port"));
-        assert!(msg.contains("abc"));
-        assert!(msg.contains("invalid digit"));
-    }
-
-    #[test]
-    fn test_error_display_validation_error() {
-        let inner: Box<dyn std::error::Error + Send + Sync> = "bad config".into();
-        let err = ConfigulatorError::ValidationError(inner);
-        assert!(err.to_string().contains("validation error"));
-        assert!(err.to_string().contains("bad config"));
-    }
-
-    #[test]
-    fn test_error_source_validation() {
-        use std::error::Error;
-        let inner: Box<dyn std::error::Error + Send + Sync> = "inner error".into();
-        let err = ConfigulatorError::ValidationError(inner);
-        assert!(err.source().is_some());
-    }
-
-    #[test]
-    fn test_error_source_parse_error_is_none() {
-        use std::error::Error;
-        let err = ConfigulatorError::ParseError {
-            field: "f".into(),
-            value: "v".into(),
-            message: "m".into(),
-        };
-        assert!(err.source().is_none());
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_error_display_file_not_found() {
-        let err = ConfigulatorError::FileNotFound;
-        assert_eq!(err.to_string(), "config file not found");
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_error_display_file_error() {
-        let err = ConfigulatorError::FileError("bad yaml".into());
-        assert!(err.to_string().contains("file error"));
-        assert!(err.to_string().contains("bad yaml"));
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_error_source_file_variants_are_none() {
-        use std::error::Error;
-        let err1 = ConfigulatorError::FileNotFound;
-        assert!(err1.source().is_none());
-        let err2 = ConfigulatorError::FileError("x".into());
-        assert!(err2.source().is_none());
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_error_display_cli_error() {
-        let err = ConfigulatorError::CLIError("unknown flag".into());
-        assert!(err.to_string().contains("CLI error"));
-        assert!(err.to_string().contains("unknown flag"));
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_error_source_cli_error_is_none() {
-        use std::error::Error;
-        let err = ConfigulatorError::CLIError("x".into());
-        assert!(err.source().is_none());
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_file_options_debug() {
-        let opts = FileOptions {
-            paths: vec![PathBuf::from("config.yaml")],
-            error_if_not_found: true,
-            loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-        };
-        let debug_str = format!("{:?}", opts);
-        assert!(debug_str.contains("FileOptions"));
-        assert!(debug_str.contains("config.yaml"));
-        assert!(debug_str.contains("error_if_not_found"));
-        assert!(debug_str.contains("<dyn FileLoader>"));
-    }
-
-    // ---- Phase 2: value_map.rs serde visitors + merge ----
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_bool() {
-        // Exercises visit_bool (value_map.rs lines 14-16)
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "debug: true").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert!(config.debug);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_integer() {
-        // Exercises visit_i64/visit_u64 (value_map.rs lines 22-24, 30-32)
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "port: 9999").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.port, 9999);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_float() {
-        // Exercises visit_f64 (value_map.rs lines 38-40)
-        #[derive(Config, Default, Debug, PartialEq)]
-        struct FloatConfig {
-            #[configulator(name = "ratio", default = "1.0")]
-            ratio: f64,
-        }
-        impl Validate for FloatConfig {
-            fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                Ok(())
-            }
-        }
-
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "ratio: 1.5").unwrap();
-
-        let config = Configulator::<FloatConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert!((config.ratio - 1.5).abs() < f64::EPSILON);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_null() {
-        // Exercises visit_none/visit_unit (value_map.rs lines 42-44, 46-48)
-        // YAML null should produce an empty scalar, field falls back to default
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: ~").unwrap(); // YAML null
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        // Null → empty scalar → String::default() = ""
-        assert_eq!(config.host, "");
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_seq_and_map() {
-        // Exercises visit_seq (line 55) and visit_map (value_map.rs lines 105-107 via nested)
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "tags:").unwrap();
-        writeln!(f, "  - one").unwrap();
-        writeln!(f, "  - two").unwrap();
-        writeln!(f, "ports:").unwrap();
-        writeln!(f, "  - 8080").unwrap();
-
-        let config = Configulator::<ListConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.tags, vec!["one", "two"]);
-        assert_eq!(config.ports, vec![8080]);
-    }
-
-    #[test]
-    fn test_merge_value_maps_nested_overwrites_scalar() {
-        // Exercises merge_value_maps type-mismatch branch (value_map.rs lines 105-107)
-        // When target has Scalar("x") and source has Nested({...}) for the same key,
-        // source should win.
-        let mut target = ValueMap::new();
-        target.insert("db".into(), ConfigValue::Scalar("old".into()));
-
-        let mut inner = ValueMap::new();
-        inner.insert("host".into(), ConfigValue::Scalar("localhost".into()));
-
-        let mut source = ValueMap::new();
-        source.insert("db".into(), ConfigValue::Nested(inner));
-
-        merge_value_maps(&mut target, &source);
-
-        match target.get("db") {
-            Some(ConfigValue::Nested(nested)) => {
-                match nested.get("host") {
-                    Some(ConfigValue::Scalar(s)) => assert_eq!(s, "localhost"),
-                    other => panic!("Expected Scalar(localhost), got {other:?}"),
-                }
-            }
-            other => panic!("Expected Nested, got {other:?}"),
-        }
-    }
-
-    // ---- Phase 3: file.rs edge cases ----
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_loader_non_nested_root_error() {
-        // Exercises SerdeLoader returning non-Nested at root (file.rs lines 33-35)
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "just a string").unwrap();
-
-        let result = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load();
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("root must be a mapping/table"));
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_file_io_error_non_not_found() {
-        // Exercises the non-NotFound I/O error branch (file.rs lines 76-80)
-        // Reading a directory triggers an I/O error that isn't NotFound
-        let dir = tempfile::tempdir().unwrap();
-        let dir_path = dir.path().to_path_buf();
-
-        let result = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![dir_path.clone()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load();
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("file error"), "unexpected error: {msg}");
-    }
-
-    // ---- Phase 4: environment.rs empty prefix ----
-
-    #[cfg(feature = "env")]
-    #[test]
-    fn test_env_empty_prefix() {
-        // Exercises the empty prefix branch (environment.rs line 46)
-        // With prefix="" and separator="_", env key should be just the field name
-        // SAFETY: No other test uses these exact bare env var names concurrently.
-        unsafe {
-            set_env("HOST", "emptyprefix");
-            set_env("PORT", "1234");
-        }
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "".into(),
-                separator: "_".into(),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "emptyprefix");
-        assert_eq!(config.port, 1234);
-
-        unsafe {
-            remove_env("HOST");
-            remove_env("PORT");
-        }
-    }
-
-    // ---- Phase 5: derive_helpers parse edge cases ----
-
-    #[test]
-    fn test_parse_scalar_with_list_value() {
-        // Exercises parse_scalar wrong type branch (derive_helpers.rs line 30)
-        let mut map = ValueMap::new();
-        map.insert("port".into(), ConfigValue::List(vec!["1".into(), "2".into()]));
-
-        let result = parse_scalar::<u16>(&map, "port");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expected scalar value"));
-    }
-
-    #[test]
-    fn test_parse_list_with_nested_value() {
-        // Exercises parse_list wrong type branch (derive_helpers.rs lines 81-85)
-        let mut map = ValueMap::new();
-        let mut nested = ValueMap::new();
-        nested.insert("x".into(), ConfigValue::Scalar("1".into()));
-        map.insert("tags".into(), ConfigValue::Nested(nested));
-
-        let result = parse_list::<String>(&map, "tags");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expected list value"));
-    }
-
-    #[test]
-    fn test_parse_list_single_scalar_as_one_element() {
-        // Exercises single scalar → one-element list (derive_helpers.rs lines 69-78)
-        let mut map = ValueMap::new();
-        map.insert("ports".into(), ConfigValue::Scalar("8080".into()));
-
-        let result = parse_list::<u16>(&map, "ports").unwrap();
-        assert_eq!(result, vec![8080]);
-    }
-
-    #[test]
-    fn test_parse_list_empty_scalar_returns_empty() {
-        // Exercises empty scalar → empty vec (derive_helpers.rs line 69)
-        let mut map = ValueMap::new();
-        map.insert("ports".into(), ConfigValue::Scalar("".into()));
-
-        let result = parse_list::<u16>(&map, "ports").unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_parse_list_item_parse_error() {
-        // Exercises parse error within list items (derive_helpers.rs lines 60-63)
-        let mut map = ValueMap::new();
-        map.insert("ports".into(), ConfigValue::List(vec!["80".into(), "not_a_port".into()]));
-
-        let result = parse_list::<u16>(&map, "ports");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("ports[1]"), "Error should mention index: {err}");
-        assert!(err.contains("not_a_port"));
-    }
-
-    #[test]
-    fn test_parse_nested_with_scalar_value() {
-        // Exercises parse_nested wrong type (derive_helpers.rs lines 96-101)
-        let mut map = ValueMap::new();
-        map.insert("database".into(), ConfigValue::Scalar("not_a_struct".into()));
-
-        let result = DatabaseConfig::from_value_map(&ValueMap::new());
-        assert!(result.is_ok()); // baseline
-
-        let result = parse_nested::<DatabaseConfig>(&map, "database");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expected nested struct value"));
-    }
-
-    #[test]
-    fn test_parse_scalar_empty_returns_default() {
-        // Exercises empty scalar → T::default() (derive_helpers.rs line 39-43)
-        let mut map = ValueMap::new();
-        map.insert("port".into(), ConfigValue::Scalar("".into()));
-
-        let result = parse_scalar::<u16>(&map, "port").unwrap();
-        assert_eq!(result, 0); // u16::default()
-    }
-
-    // ---- Phase 6: cli.rs edge cases ----
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_bool_explicit_true() {
-        // Exercises bool flag with explicit "true" value (cli.rs lines 92-99)
-        let config = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--debug".into(), "true".into()])
-            .load()
-            .unwrap();
-
-        assert!(config.debug);
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_bool_explicit_false() {
-        // Exercises bool flag with explicit "false" value (cli.rs lines 92-99)
-        let config = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--debug".into(), "false".into()])
-            .load()
-            .unwrap();
-
-        assert!(!config.debug);
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_list_flags_repeated() {
-        // Exercises list extraction with get_many (cli.rs lines 152-154, 156-161)
-        let config = Configulator::<ListConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--tags".into(), "x".into(),
-                "--tags".into(), "y".into(),
-                "--ports".into(), "80".into(),
-                "--ports".into(), "443".into(),
-            ])
-            .load()
-            .unwrap();
-
-        assert_eq!(config.tags, vec!["x", "y"]);
-        assert_eq!(config.ports, vec![80, 443]);
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_unknown_flag_error() {
-        // Exercises CLIError from clap parse failure (cli.rs line 18)
-        let result = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--nonexistent-flag".into(), "val".into()])
-            .load();
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("CLI error"), "unexpected error: {}", err);
-    }
-
-    // ---- Phase 7: configulator.rs builder edge cases ----
-
-    #[test]
-    fn test_configulator_default_trait() {
-        // Exercises Configulator::default() (configulator.rs lines 206-208)
-        let config = Configulator::<SimpleConfig>::default()
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 8080);
-        assert!(!config.debug);
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_without_file_opts() {
-        // Exercises has_file=false path (configulator.rs lines 105-108)
-        // CLI configured without .with_file()
-        let config = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--host".into(), "clionly".into()])
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "clionly");
-        assert_eq!(config.port, 8080); // from default
-    }
-
-    #[cfg(all(feature = "file", feature = "cli"))]
-    #[test]
-    fn test_config_file_key_does_not_leak() {
-        // Exercises __config_file__ removal (configulator.rs line 195)
-        // After loading with --config, the internal key should not appear
-        // in the final config struct fields
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: from-config-file").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--config".into(),
-                file_path.to_string_lossy().to_string(),
-            ])
-            .load()
-            .unwrap();
-
-        // The config loaded correctly and __config_file__ didn't cause issues
-        assert_eq!(config.host, "from-config-file");
-        assert_eq!(config.port, 8080); // default
-    }
-
-    // ---- Additional coverage for remaining gaps ----
-
-    // Struct with described list fields — needed for cli.rs line 97
-    #[derive(Config, Default, Debug, PartialEq)]
-    struct DescribedListConfig {
-        #[configulator(name = "items", description = "List of items")]
-        items: Vec<String>,
-    }
-
-    impl Validate for DescribedListConfig {
+    let config = Configulator::<DurationConfig>::new().load().unwrap();
+    assert_eq!(config.timeout.get(), std::time::Duration::from_secs(30));
+
+    let f = yaml_file("timeout: 1h30m\n");
+    let config = Configulator::<DurationConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap();
+    assert_eq!(config.timeout.get(), std::time::Duration::from_secs(5400));
+    assert_eq!(config.timeout.to_string(), "1h30m0s");
+}
+
+#[test]
+fn field_named_like_old_sentinel_survives() {
+    #[derive(Config, Debug)]
+    struct SentinelConfig {
+        #[configulator(name = "__config_file__", default = "keep-me")]
+        config_file: String,
+    }
+    impl Validate for SentinelConfig {
         fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(())
         }
     }
+    let config = Configulator::<SentinelConfig>::new().load().unwrap();
+    assert_eq!(config.config_file, "keep-me");
+}
 
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_list_with_description() {
-        // Exercises cli.rs line 97: `arg = arg.help(desc)` in the List branch
-        // of register_args — requires a list field with a description attribute
-        let config = Configulator::<DescribedListConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--items".into(), "a".into(), "--items".into(), "b".into()])
-            .load()
-            .unwrap();
+#[derive(Config, Debug)]
+struct RequiredNestedConfig {
+    #[configulator(name = "db", nested, required)]
+    db: RequiredDb,
+}
 
-        assert_eq!(config.items, vec!["a", "b"]);
+#[derive(Config, Debug)]
+struct RequiredDb {
+    #[configulator(name = "host")]
+    host: String,
+}
+
+#[test]
+fn required_nested_struct_is_set_by_its_fields() {
+    let config = Configulator::<RequiredNestedConfig>::new()
+        .with_environment_variables(env_opts("T_"))
+        .with_env_vars(env(&[("T_DB_HOST", "h")]))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.db.host, "h");
+
+    let err = Configulator::<RequiredNestedConfig>::new()
+        .with_environment_variables(env_opts("T_"))
+        .with_env_vars(env(&[]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::Required { path } if path == "db"));
+}
+
+#[derive(Config, Debug)]
+struct OptionalSectionConfig {
+    #[configulator(name = "db", nested)]
+    db: Option<OptionalSectionDb>,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct OptionalSectionDb {
+    #[configulator(name = "host", required)]
+    host: String,
+    #[configulator(name = "port")]
+    port: Option<u16>,
+}
+
+#[test]
+fn unset_optional_section_skips_its_required_fields() {
+    let config = Configulator::<OptionalSectionConfig>::new()
+        .with_environment_variables(env_opts("T_"))
+        .with_env_vars(env(&[]))
+        .load_without_validation()
+        .unwrap();
+    assert!(config.db.is_none());
+
+    let err = Configulator::<OptionalSectionConfig>::new()
+        .with_environment_variables(env_opts("T_"))
+        .with_env_vars(env(&[("T_DB_PORT", "5432")]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(matches!(err, ConfigulatorError::Required { path } if path == "db.host"));
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct ShortCConfig {
+    #[configulator(name = "concurrency", short = 'c', default = "1")]
+    concurrency: u32,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct DuplicateShortConfig {
+    #[configulator(name = "port", short = 'p', default = "1")]
+    port: u16,
+    #[configulator(name = "path", short = 'p', default = "x")]
+    path: String,
+}
+
+#[test]
+fn flag_conflicts_are_errors_not_panics() {
+    let f = yaml_file("concurrency: 2\n");
+    let err = Configulator::<ShortCConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&[]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "-c"),
+        "{err}"
+    );
+
+    let err = Configulator::<DuplicateShortConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&[]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "-p"),
+        "{err}"
+    );
+
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_command(clap::Command::new("app").arg(clap::Arg::new("port").long("port")))
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&[]))
+        .load_without_validation()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "--port"),
+        "{err}"
+    );
+}
+
+#[derive(Config, Debug)]
+struct RawIdentConfig {
+    #[configulator(default = "a")]
+    r#type: String,
+}
+
+#[test]
+fn raw_identifier_fields() {
+    let f = yaml_file("type: b\n");
+    let config = Configulator::<RawIdentConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.r#type, "b");
+
+    let config = Configulator::<RawIdentConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--type", "c"]))
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.r#type, "c");
+}
+
+#[derive(Config, Debug)]
+struct ElementSepConfig {
+    #[configulator(name = "servers", nested)]
+    servers: Vec<ElementSepServer>,
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct ElementSepServer {
+    #[configulator(name = "addr")]
+    addr: String,
+    #[configulator(name = "tags", default = "a;b")]
+    tags: Vec<String>,
+}
+
+#[test]
+fn element_defaults_use_the_array_separator() {
+    let f = yaml_file("servers:\n  - addr: x\n");
+    let config = Configulator::<ElementSepConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .with_array_separator(";")
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.servers[0].tags, vec!["a", "b"]);
+}
+
+#[derive(Default)]
+struct NoDebug(String);
+
+impl std::str::FromStr for NoDebug {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        Ok(NoDebug(s.to_string()))
     }
+}
 
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_list_not_provided() {
-        // Exercises cli.rs lines 160-161: List field is registered in clap
-        // but no values are provided on the command line, so get_many returns None
-        let config = Configulator::<ListConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![]) // no list args provided
-            .load()
-            .unwrap();
+#[derive(Config)]
+struct NoDebugConfig {
+    #[configulator(name = "token", default = "x")]
+    token: NoDebug,
+    #[configulator(name = "port", default = "1")]
+    port: u16,
+}
 
-        // Should fall back to defaults: tags=["a","b","c"], ports=[]
-        assert_eq!(config.tags, vec!["a", "b", "c"]);
-        assert!(config.ports.is_empty());
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_with_cli_command() {
-        // Exercises configulator.rs lines 105-108: with_cli_command
-        let cmd = clap::Command::new("myapp").version("1.0.0");
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_cli_command(cmd)
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--host".into(), "custom-cmd".into()])
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "custom-cmd");
-        assert_eq!(config.port, 8080);
-    }
-
-    #[cfg(feature = "cli")]
-    #[test]
-    fn test_cli_no_explicit_args_falls_back_to_env_args() {
-        // Exercises configulator.rs line 195: the None branch of get_cli_args
-        // where with_cli_args() was NOT called. std::env::args() from the test
-        // runner will be passed to clap, which will likely fail because the test
-        // runner passes unknown flags (like --test-threads).
-        let result = Configulator::<SimpleConfig>::new()
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            // Deliberately NOT calling .with_cli_args() to exercise None branch
-            .load();
-
-        // This may or may not succeed depending on test runner args;
-        // the point is that line 195 is executed either way.
-        // Check it returns either Ok or a CLIError (both are valid).
-        match result {
-            Ok(_) => {} // no extra test runner args happened to conflict
-            Err(ref e) => {
-                assert!(
-                    e.to_string().contains("CLI error"),
-                    "Expected CLIError from unknown test runner args, got: {e}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_parse_list_scalar_parse_failure() {
-        // Exercises derive_helpers.rs lines 74-77: parse error in the
-        // single-scalar-treated-as-one-element-list path
-        let mut map = ValueMap::new();
-        map.insert("ports".into(), ConfigValue::Scalar("not_a_u16".into()));
-
-        let result = parse_list::<u16>(&map, "ports");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("ports"), "Error should mention field: {err}");
-        assert!(err.contains("not_a_u16"), "Error should mention value: {err}");
-    }
-
-    #[test]
-    fn test_parse_nested_with_nested_value() {
-        // Exercises derive_helpers.rs line 96: parse_nested happy path
-        // where the value IS a ConfigValue::Nested
-        let mut inner = ValueMap::new();
-        inner.insert("url".into(), ConfigValue::Scalar("postgres://test/db".into()));
-        inner.insert("max-connections".into(), ConfigValue::Scalar("42".into()));
-
-        let mut map = ValueMap::new();
-        map.insert("database".into(), ConfigValue::Nested(inner));
-
-        let db = parse_nested::<DatabaseConfig>(&map, "database").unwrap();
-        assert_eq!(db.url, "postgres://test/db");
-        assert_eq!(db.max_connections, 42);
-    }
-
-    #[cfg(feature = "env")]
-    #[test]
-    fn test_env_list_with_empty_prefix() {
-        // Exercises environment.rs line 46: List insertion with empty prefix
-        // SAFETY: No other test uses these exact bare env var names concurrently.
-        unsafe {
-            set_env("TAGS", "env1,env2,env3");
-            set_env("PORTS", "3000,4000");
-        }
-
-        let config = Configulator::<ListConfig>::new()
-            .with_environment_variables(EnvironmentVariableOptions {
-                prefix: "".into(),
-                separator: "_".into(),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.tags, vec!["env1", "env2", "env3"]);
-        assert_eq!(config.ports, vec![3000, 4000]);
-
-        unsafe {
-            remove_env("TAGS");
-            remove_env("PORTS");
-        }
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_negative_integer() {
-        // Exercises value_map.rs lines 22-24: visit_i64
-        // serde_yaml_ng uses visit_u64 for positive ints but visit_i64 for negative
-        #[derive(Config, Default, Debug, PartialEq)]
-        struct SignedConfig {
-            #[configulator(name = "offset", default = "0")]
-            offset: i64,
-        }
-        impl Validate for SignedConfig {
-            fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                Ok(())
-            }
-        }
-
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "offset: -42").unwrap();
-
-        let config = Configulator::<SignedConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.offset, -42);
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_explicit_null_keyword() {
-        // Exercises value_map.rs lines 42-44: visit_none
-        // Uses explicit `null` keyword instead of `~` to cover the other null path
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: null").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "");
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_string_value() {
-        // Exercises value_map.rs lines 38-40: visit_string (owned string)
-        // Uses a quoted YAML string which may trigger visit_string in some serde impls
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        // Quoted string with special chars to force owned String allocation
-        writeln!(f, "host: \"hello\\nworld\"").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load()
-            .unwrap();
-
-        assert_eq!(config.host, "hello\nworld");
-    }
-
-    #[cfg(feature = "file")]
-    #[test]
-    fn test_serde_visitor_seq_rejects_nested_elements() {
-        // Exercises value_map.rs visit_seq: non-scalar elements in a sequence
-        // must produce an error rather than silently degrading to debug strings.
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "tags:").unwrap();
-        writeln!(f, "  - simple").unwrap();
-        writeln!(f, "  - key: value").unwrap(); // nested map inside a seq
-
-        let result = Configulator::<ListConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![file_path.to_path_buf()],
-                error_if_not_found: true,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .load();
-
-        assert!(result.is_err(), "expected error for nested value in sequence");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("nested values inside sequences are not supported"),
-            "unexpected error message: {err}"
-        );
-    }
-
-    #[cfg(all(feature = "file", feature = "cli"))]
-    #[test]
-    fn test_explicit_config_missing_is_hard_error() {
-        // A typo'd --config must fail loudly, even with error_if_not_found:
-        // false — silently booting on defaults is the bug this fixes.
-        let err = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--config".into(),
-                "/nonexistent/typo'd/config.yaml".into(),
-            ])
-            .load()
-            .unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("/nonexistent/typo'd/config.yaml"),
-            "error must name the path the operator typed: {msg}"
-        );
-    }
-
-    #[cfg(all(feature = "file", feature = "cli"))]
-    #[test]
-    fn test_explicit_config_does_not_fall_back_to_search_paths() {
-        // A valid search-path file exists, but the explicitly named path does
-        // not: the load must still fail. Pre-v0.1.4 the bad path was merely
-        // prepended and the search path silently won.
-        let dir = tempfile::tempdir().unwrap();
-        let good = dir.path().join("good.yaml");
-        let mut f = std::fs::File::create(&good).unwrap();
-        writeln!(f, "host: from-search-path").unwrap();
-
-        let err = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![good],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec!["--config".into(), "/does/not/exist.yaml".into()])
-            .load()
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("/does/not/exist.yaml"),
-            "explicit path must not fall back to search paths: {err}"
-        );
-    }
-
-    #[cfg(all(feature = "file", feature = "cli"))]
-    #[test]
-    fn test_explicit_config_valid_path_loads() {
-        // The happy path: an explicit --config that exists loads that file.
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("explicit.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: from-explicit").unwrap();
-
-        let config = Configulator::<SimpleConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![PathBuf::from("/some/other/search.yaml")],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--config".into(),
-                file_path.to_string_lossy().to_string(),
-            ])
-            .load()
-            .unwrap();
-        assert_eq!(config.host, "from-explicit");
-    }
-
-    // ---- The --config path travels out of band (v0.1.4): a config field
-    // ---- named "__config_file__" is an ordinary field, not a collision.
-
-    #[derive(Config, Default, Debug, PartialEq)]
-    struct SentinelNameConfig {
-        #[configulator(name = "__config_file__", default = "unset")]
-        sentinel: String,
-
-        #[configulator(name = "host", default = "localhost")]
-        host: String,
-    }
-
-    impl Validate for SentinelNameConfig {
-        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            Ok(())
-        }
-    }
-
-    #[cfg(all(feature = "file", feature = "cli"))]
-    #[test]
-    fn test_field_named_like_old_sentinel_survives() {
-        // Pre-v0.1.4 the --config path was smuggled through the value map
-        // under "__config_file__" and stripped before merge, which would have
-        // destroyed a user field with that name. It now travels out of band.
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "host: from-file").unwrap();
-
-        let config = Configulator::<SentinelNameConfig>::new()
-            .with_file(FileOptions {
-                paths: vec![],
-                error_if_not_found: false,
-                loader: serde_loader(|s| serde_yaml_ng::from_str(s)),
-            })
-            .with_cli_flags(CLIFlagOptions { separator: ".".into() })
-            .with_cli_args(vec![
-                "--config".into(),
-                file_path.to_string_lossy().to_string(),
-                "--__config_file__".into(),
-                "user-value".into(),
-            ])
-            .load()
-            .unwrap();
-        assert_eq!(config.host, "from-file");
-        assert_eq!(
-            config.sentinel, "user-value",
-            "a field named __config_file__ must survive --config handling"
-        );
-    }
-
+#[test]
+fn print_config_without_debug() {
+    let config = Configulator::<NoDebugConfig>::new()
+        .load_without_validation()
+        .unwrap();
+    assert_eq!(config.token.0, "x");
+    let out = config.print_config();
+    assert!(out.contains("token = (no Debug impl)"), "{out}");
+    assert!(out.contains("port = 1"), "{out}");
 }

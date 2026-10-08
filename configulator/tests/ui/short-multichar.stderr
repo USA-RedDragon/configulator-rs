@@ -1,0 +1,5 @@
+error: unexpected end of input, expected string literal
+ --> tests/ui/short-multichar.rs:5:44
+  |
+5 |     #[configulator(name = "x", short = "xy")]
+  |                                            ^

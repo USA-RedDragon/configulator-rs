@@ -1,42 +1,51 @@
+#[cfg(any(feature = "env", feature = "cli", feature = "testing"))]
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 #[cfg(feature = "cli")]
 use crate::cli;
-use crate::defaults;
-#[cfg(feature = "env")]
-use crate::environment;
 use crate::error::ConfigulatorError;
+use crate::field_info::{FieldInfo, FieldType};
 #[cfg(feature = "file")]
 use crate::file;
-#[cfg(feature = "file")]
-use crate::options::FileOptions;
-#[cfg(feature = "env")]
-use crate::options::EnvironmentVariableOptions;
 #[cfg(feature = "cli")]
 use crate::options::CLIFlagOptions;
-use crate::value_map::{merge_value_maps, ValueMap};
-use crate::{ConfigFields, FromValueMap, Validate};
+#[cfg(feature = "env")]
+use crate::options::EnvironmentVariableOptions;
+#[cfg(feature = "file")]
+use crate::options::FileOptions;
+use crate::report::{Layer, Report};
+use crate::shadow::HasShadow;
+use crate::Validate;
 
-/// Builder for loading configuration from multiple sources into a typed struct.
+#[cfg(feature = "env")]
+type EnvGetter<'a> = Box<dyn Fn(&str) -> Option<String> + 'a>;
+
+/// Builder for loading configuration from multiple sources into a typed
+/// struct.
 ///
-/// Sources are applied in precedence order: defaults < file < env vars < CLI flags.
+/// Sources are applied in precedence order:
+/// defaults < file < env vars < CLI flags.
 ///
 /// Available sources depend on enabled feature flags (`file`, `env`, `cli`).
-pub struct Configulator<C> {
+pub struct Configulator<C: HasShadow> {
     #[cfg(feature = "file")]
-    file_opts: Option<FileOptions>,
+    file_opts: Option<FileOptions<C>>,
     #[cfg(feature = "env")]
     env_opts: Option<EnvironmentVariableOptions>,
     #[cfg(feature = "cli")]
     cli_opts: Option<CLIFlagOptions>,
     #[cfg(feature = "testing")]
     cli_args: Option<Vec<String>>,
+    #[cfg(feature = "testing")]
+    env_vars: Option<HashMap<String, String>>,
     #[cfg(feature = "cli")]
     cli_command: Option<clap::Command>,
+    array_separator: String,
     _marker: PhantomData<C>,
 }
 
-impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
+impl<C: HasShadow> Configulator<C> {
     /// Create a new builder.
     #[must_use]
     pub fn new() -> Self {
@@ -49,8 +58,11 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
             cli_opts: None,
             #[cfg(feature = "testing")]
             cli_args: None,
+            #[cfg(feature = "testing")]
+            env_vars: None,
             #[cfg(feature = "cli")]
             cli_command: None,
+            array_separator: ",".to_string(),
             _marker: PhantomData,
         }
     }
@@ -58,11 +70,11 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
     /// Enable loading from a config file.
     ///
     /// The [`FileOptions`] must include a [`FileLoader`](crate::FileLoader)
-    /// implementation that parses the file contents. Use [`serde_loader`](crate::serde_loader)
-    /// for any serde-compatible format.
+    /// implementation that parses the file contents. Use
+    /// [`serde_loader`](crate::serde_loader) for any serde-compatible format.
     #[cfg(feature = "file")]
     #[must_use]
-    pub fn with_file(mut self, opts: FileOptions) -> Self {
+    pub fn with_file(mut self, opts: FileOptions<C>) -> Self {
         self.file_opts = Some(opts);
         self
     }
@@ -83,11 +95,29 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         self
     }
 
+    /// Set the separator used to split list values in env vars and
+    /// `default` attributes (`,` by default). CLI list flags are repeated
+    /// instead and are not affected.
+    #[must_use]
+    pub fn with_array_separator(mut self, sep: impl Into<String>) -> Self {
+        self.array_separator = sep.into();
+        self
+    }
+
     /// Override CLI args (for testing). If not called, uses `std::env::args()`.
     #[cfg(feature = "testing")]
     #[must_use]
     pub fn with_cli_args(mut self, args: Vec<String>) -> Self {
         self.cli_args = Some(args);
+        self
+    }
+
+    /// Override the environment (for testing). If not called, uses
+    /// `std::env::var`.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn with_env_vars(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars = Some(vars);
         self
     }
 
@@ -120,70 +150,132 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
 
     /// Load configuration without running validation.
     pub fn load_without_validation(self) -> Result<C, ConfigulatorError> {
-        let fields = C::configulator_fields();
-        let mut merged = ValueMap::new();
+        self.load_impl().map(|(c, _)| c)
+    }
 
-        // 1. Defaults (lowest precedence)
-        let defaults = defaults::load_defaults(&fields);
-        merge_value_maps(&mut merged, &defaults);
+    /// Load configuration (with validation) alongside the per-field origin
+    /// [`Report`].
+    pub fn load_with_report(self) -> Result<(C, Report), ConfigulatorError>
+    where
+        C: Validate,
+    {
+        let (config, report) = self.load_impl()?;
+        config
+            .validate()
+            .map_err(ConfigulatorError::ValidationError)?;
+        Ok((config, report))
+    }
 
-        // 2. Parse CLI once (if configured) to get both config path and values.
-        // The --config path travels out of band, not through the value map.
+    fn load_impl(self) -> Result<(C, Report), ConfigulatorError> {
+        let mut report = Report::default();
+        let mut acc = C::Shadow::default();
+
+        let defaults = C::shadow_defaults(&self.array_separator)?;
+        C::overlay(
+            &mut acc,
+            defaults,
+            "",
+            Layer::Default,
+            &|_| "default".to_string(),
+            &mut report,
+        );
+
+        // CLI is parsed first to find --config, but its values merge last.
         #[cfg(feature = "cli")]
-        let (cli_values, cli_config_path) = if let Some(ref opts) = self.cli_opts {
+        #[cfg_attr(not(feature = "file"), allow(unused_variables))]
+        let (cli_shadow, cli_config_path, cli_sep) = if let Some(ref opts) = self.cli_opts {
             let args = self.get_cli_args();
-            let has_file = {
-                #[cfg(feature = "file")]
-                { self.file_opts.is_some() }
-                #[cfg(not(feature = "file"))]
-                { false }
-            };
-            let (values, config_path) =
-                cli::load_from_cli(opts, &fields, &args, has_file, self.cli_command.clone())?;
-            (Some(values), config_path)
+            let config_flag = self.config_flag_spec();
+            let cmd = cli::build_command(
+                self.cli_command.clone(),
+                &C::fields(),
+                &opts.separator,
+                config_flag.clone(),
+                &binary_name(),
+            )?;
+            let (matches, config_path) =
+                cli::parse(cmd, &args, config_flag.as_ref().map(|(n, _)| n.as_str()))?;
+            let shadow = C::from_cli(&matches, "", &opts.separator)?;
+            (Some(shadow), config_path, opts.separator.clone())
         } else {
-            (None, None)
+            (None, None, String::new())
         };
 
-        // 3. File. A typo'd --config must not silently
-        // boot the app on defaults.
         #[cfg(feature = "file")]
         if let Some(ref opts) = self.file_opts {
             #[cfg(feature = "cli")]
-            let file_values = if let Some(ref path) = cli_config_path {
-                file::load_from_explicit(opts, std::path::Path::new(path))?
-            } else {
-                file::load_from_file(opts)?
-            };
+            let cli_explicit = cli_config_path.as_deref().map(std::path::Path::new);
             #[cfg(not(feature = "cli"))]
-            let file_values = file::load_from_file(opts)?;
-            merge_value_maps(&mut merged, &file_values);
+            let cli_explicit = None;
+            if let Some((shadow, path)) = file::load::<C>(opts, cli_explicit)? {
+                C::overlay(
+                    &mut acc,
+                    shadow,
+                    "",
+                    Layer::File,
+                    &|_| path.clone(),
+                    &mut report,
+                );
+            }
         }
 
-        // 4. Environment variables
         #[cfg(feature = "env")]
         if let Some(ref opts) = self.env_opts {
-            let env_values = environment::load_from_env(opts, &fields);
-            merge_value_maps(&mut merged, &env_values);
+            validate_env_options(opts)?;
+            let sep = if opts.separator.is_empty() {
+                "__".to_string()
+            } else {
+                opts.separator.clone()
+            };
+            let getter = self.env_getter();
+            let shadow = C::from_env(getter.as_ref(), &opts.prefix, &sep, &self.array_separator)?;
+            let names = env_name_map(&C::fields(), &opts.prefix, &sep);
+            C::overlay(
+                &mut acc,
+                shadow,
+                "",
+                Layer::Env,
+                &|p| names.get(p).cloned().unwrap_or_else(|| p.to_string()),
+                &mut report,
+            );
         }
 
-        // 5. CLI flags (highest precedence)
         #[cfg(feature = "cli")]
-        if let Some(cli_values) = cli_values {
-            merge_value_maps(&mut merged, &cli_values);
+        if let Some(shadow) = cli_shadow {
+            let names = flag_name_map(&C::fields(), &cli_sep);
+            C::overlay(
+                &mut acc,
+                shadow,
+                "",
+                Layer::Cli,
+                &|p| names.get(p).cloned().unwrap_or_else(|| format!("--{p}")),
+                &mut report,
+            );
         }
 
-        C::from_value_map(&merged)
+        let config = C::build(acc, "", &self.array_separator, &mut report)?;
+        check_required(&C::fields(), "", &report)?;
+        Ok((config, report))
     }
 
     /// Get the default config (all defaults applied, no other sources).
     ///
-    /// Validation is **not** performed. Call
-    /// [`Validate::validate`](crate::Validate::validate) on the result if needed.
+    /// Validation is not performed. Call
+    /// [`Validate::validate`](crate::Validate::validate) on the result if
+    /// needed.
     pub fn defaults_only() -> Result<C, ConfigulatorError> {
-        let fields = C::configulator_fields();
-        let defaults = defaults::load_defaults(&fields);
-        C::from_value_map(&defaults)
+        let mut report = Report::default();
+        let mut acc = C::Shadow::default();
+        let defaults = C::shadow_defaults(",")?;
+        C::overlay(
+            &mut acc,
+            defaults,
+            "",
+            Layer::Default,
+            &|_| "default".to_string(),
+            &mut report,
+        );
+        C::build(acc, "", ",", &mut report)
     }
 
     #[cfg(feature = "cli")]
@@ -194,10 +286,168 @@ impl<C: ConfigFields + FromValueMap + Default> Configulator<C> {
         }
         std::env::args().skip(1).collect()
     }
+
+    /// The --config flag (name, short), registered only when the file
+    /// layer is configured.
+    #[cfg(feature = "cli")]
+    fn config_flag_spec(&self) -> Option<(String, char)> {
+        #[cfg(feature = "file")]
+        {
+            self.file_opts.as_ref().map(|fo| {
+                (
+                    fo.flag_name.clone().unwrap_or_else(|| "config".to_string()),
+                    fo.shorthand.unwrap_or('c'),
+                )
+            })
+        }
+        #[cfg(not(feature = "file"))]
+        {
+            None
+        }
+    }
+
+    #[cfg(feature = "env")]
+    fn env_getter(&self) -> EnvGetter<'_> {
+        #[cfg(feature = "testing")]
+        if let Some(vars) = &self.env_vars {
+            return Box::new(move |k: &str| vars.get(k).cloned());
+        }
+        Box::new(|k: &str| std::env::var(k).ok())
+    }
 }
 
-impl<C: ConfigFields + FromValueMap + Default> Default for Configulator<C> {
+impl<C: HasShadow> Default for Configulator<C> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The usage-line name when no custom command is provided: the binary
+/// name, falling back to "app".
+#[cfg(feature = "cli")]
+fn binary_name() -> String {
+    std::env::args()
+        .next()
+        .as_deref()
+        .map(std::path::Path::new)
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".to_string())
+}
+
+#[cfg(feature = "env")]
+fn validate_env_options(opts: &EnvironmentVariableOptions) -> Result<(), ConfigulatorError> {
+    if opts.prefix != opts.prefix.to_uppercase() {
+        return Err(ConfigulatorError::BadEnvOptions(format!(
+            "prefix {:?} must be uppercase",
+            opts.prefix
+        )));
+    }
+    if opts.separator.contains('-') {
+        return Err(ConfigulatorError::BadEnvOptions(format!(
+            "separator {:?} must not contain '-'",
+            opts.separator
+        )));
+    }
+    Ok(())
+}
+
+/// Map dotted config paths to their env var names, honoring `env = "..."`
+/// overrides, for origin details.
+#[cfg(feature = "env")]
+fn env_name_map(fields: &[FieldInfo], prefix: &str, sep: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    fn walk(
+        fields: &[FieldInfo],
+        var_prefix: &str,
+        path_prefix: &str,
+        sep: &str,
+        out: &mut HashMap<String, String>,
+    ) {
+        for f in fields {
+            if f.skip_env {
+                continue;
+            }
+            let var = format!("{var_prefix}{}", f.env_segment);
+            let path = crate::shadow::__private::join(path_prefix, f.config_name);
+            match &f.field_type {
+                FieldType::Struct(sub) => {
+                    walk(sub, &format!("{var}{sep}"), &path, sep, out);
+                }
+                FieldType::Map | FieldType::StructList(_) | FieldType::StructMap(_) => {}
+                _ => {
+                    out.insert(path, var);
+                }
+            }
+        }
+    }
+    walk(fields, prefix, "", sep, &mut out);
+    out
+}
+
+/// Map dotted config paths to `--flag` spellings, honoring `flag = "..."`
+/// overrides, for origin details.
+#[cfg(feature = "cli")]
+fn flag_name_map(fields: &[FieldInfo], sep: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    fn walk(
+        fields: &[FieldInfo],
+        flag_prefix: &str,
+        path_prefix: &str,
+        sep: &str,
+        out: &mut HashMap<String, String>,
+    ) {
+        for f in fields {
+            if f.skip_cli {
+                continue;
+            }
+            let flag = if flag_prefix.is_empty() {
+                f.flag_segment.to_string()
+            } else {
+                format!("{flag_prefix}{sep}{}", f.flag_segment)
+            };
+            let path = crate::shadow::__private::join(path_prefix, f.config_name);
+            match &f.field_type {
+                FieldType::Struct(sub) => walk(sub, &flag, &path, sep, out),
+                FieldType::Map | FieldType::StructList(_) | FieldType::StructMap(_) => {}
+                _ => {
+                    out.insert(path, format!("--{flag}"));
+                }
+            }
+        }
+    }
+    walk(fields, "", "", sep, &mut out);
+    out
+}
+
+/// Check `required` fields against the report: some layer (including a
+/// `default` attribute) must have set each one. A nested struct counts as
+/// set when any field under it is set, and the fields of an unset
+/// `Option` struct are not checked. Fields inside collections are not
+/// checked.
+fn check_required(
+    fields: &[FieldInfo],
+    path_prefix: &str,
+    report: &Report,
+) -> Result<(), ConfigulatorError> {
+    for f in fields {
+        let path = crate::shadow::__private::join(path_prefix, f.config_name);
+        let set = || {
+            report.origin(&path).is_some() || {
+                let (dot, bracket) = (format!("{path}."), format!("{path}["));
+                report
+                    .paths()
+                    .any(|p| p.starts_with(&dot) || p.starts_with(&bracket))
+            }
+        };
+        if f.required && !set() {
+            return Err(ConfigulatorError::Required { path });
+        }
+        if let FieldType::Struct(sub) = &f.field_type {
+            if !f.optional || set() {
+                check_required(sub, &path, report)?;
+            }
+        }
+    }
+    Ok(())
 }

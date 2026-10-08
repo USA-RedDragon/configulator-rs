@@ -1,165 +1,126 @@
 use crate::error::ConfigulatorError;
 use crate::field_info::{FieldInfo, FieldType};
-use crate::options::CLIFlagOptions;
-use crate::value_map::{ConfigValue, ValueMap};
 
-/// Load configuration values from CLI arguments using clap.
-///
-/// Builds a clap `Command` dynamically from the field metadata and parses
-/// the provided args. Flag names for nested structs use the configured separator
-/// (e.g. `--database.host` with separator `.`).
-///
-/// Returns the parsed values alongside the `--config` path, if one was given.
-pub fn load_from_cli(
-    opts: &CLIFlagOptions,
+/// Build the clap `Command` for a config's fields. Nested structs use the
+/// configured separator in flag names (`--database.host`). Collections
+/// and `flag = "-"` fields are skipped (SPEC rule 6).
+pub(crate) fn build_command(
+    base: Option<clap::Command>,
     fields: &[FieldInfo],
-    args: &[String],
-    config_file_flag: bool,
-    base_cmd: Option<clap::Command>,
-) -> Result<(ValueMap, Option<String>), ConfigulatorError> {
-    let mut cmd = base_cmd
-        .unwrap_or_else(|| clap::Command::new("app"))
+    separator: &str,
+    config_flag: Option<(String, char)>,
+    default_name: &str,
+) -> Result<clap::Command, ConfigulatorError> {
+    let mut cmd = base
+        .unwrap_or_else(|| clap::Command::new(default_name.to_string()))
         .no_binary_name(true)
         .disable_version_flag(true);
 
-    if config_file_flag {
+    if let Some((name, short)) = config_flag {
+        check_free(&cmd, &name, Some(short))?;
         cmd = cmd.arg(
-            clap::Arg::new("config")
-                .short('c')
-                .long("config")
+            clap::Arg::new(name.clone())
+                .short(short)
+                .long(name)
                 .help("Path to configuration file")
                 .num_args(1),
         );
     }
 
-    cmd = register_args(cmd, fields, "", &opts.separator);
-
-    let matches = cmd
-        .try_get_matches_from(args)
-        .map_err(|e| ConfigulatorError::CLIError(e.to_string()))?;
-
-    let map = extract_values(&matches, fields, "", &opts.separator);
-
-    let config_path = if config_file_flag {
-        matches.get_one::<String>("config").cloned()
-    } else {
-        None
-    };
-
-    Ok((map, config_path))
+    register_args(&mut cmd, fields, "", separator)?;
+    Ok(cmd)
 }
 
-fn build_flag_name(prefix: &str, separator: &str, config_name: &str) -> String {
-    if prefix.is_empty() {
-        config_name.to_string()
-    } else {
-        format!("{prefix}{separator}{config_name}")
+fn check_free(
+    cmd: &clap::Command,
+    long: &str,
+    short: Option<char>,
+) -> Result<(), ConfigulatorError> {
+    for a in cmd.get_arguments() {
+        if a.get_id() == long || a.get_long() == Some(long) {
+            return Err(ConfigulatorError::FlagConflict(format!("--{long}")));
+        }
+        if let Some(c) = short.filter(|c| a.get_short() == Some(*c)) {
+            return Err(ConfigulatorError::FlagConflict(format!("-{c}")));
+        }
     }
-}
-
-fn is_cli_provided(matches: &clap::ArgMatches, flag_name: &str) -> bool {
-    matches.value_source(flag_name) == Some(clap::parser::ValueSource::CommandLine)
+    if !cmd.is_disable_help_flag_set() {
+        if long == "help" {
+            return Err(ConfigulatorError::FlagConflict("--help".into()));
+        }
+        if short == Some('h') {
+            return Err(ConfigulatorError::FlagConflict("-h".into()));
+        }
+    }
+    Ok(())
 }
 
 fn register_args(
-    mut cmd: clap::Command,
+    cmd: &mut clap::Command,
     fields: &[FieldInfo],
     prefix: &str,
     separator: &str,
-) -> clap::Command {
+) -> Result<(), ConfigulatorError> {
     for field in fields {
-        let flag_name = build_flag_name(prefix, separator, field.config_name);
-
-        match &field.field_type {
-            FieldType::Struct(sub_fields) => {
-                cmd = register_args(cmd, sub_fields, &flag_name, separator);
-            }
-            FieldType::Bool => {
-                let mut arg = clap::Arg::new(flag_name.clone())
-                    .long(flag_name)
-                    .num_args(0..=1)
-                    .default_missing_value("true")
-                    .require_equals(false);
-                if let Some(desc) = field.description {
-                    arg = arg.help(desc);
-                }
-                cmd = cmd.arg(arg);
-            }
-            FieldType::Scalar => {
-                let mut arg = clap::Arg::new(flag_name.clone())
-                    .long(flag_name)
-                    .num_args(1);
-                if let Some(desc) = field.description {
-                    arg = arg.help(desc);
-                }
-                cmd = cmd.arg(arg);
-            }
-            FieldType::List => {
-                let mut arg = clap::Arg::new(flag_name.clone())
-                    .long(flag_name)
-                    .num_args(1)
-                    .action(clap::ArgAction::Append);
-                if let Some(desc) = field.description {
-                    arg = arg.help(desc);
-                }
-                cmd = cmd.arg(arg);
-            }
+        if field.skip_cli {
+            continue;
         }
+        let flag_name = if prefix.is_empty() {
+            field.flag_segment.to_string()
+        } else {
+            format!("{prefix}{separator}{}", field.flag_segment)
+        };
+
+        let arg = match &field.field_type {
+            FieldType::Struct(sub) => {
+                register_args(cmd, sub, &flag_name, separator)?;
+                continue;
+            }
+            FieldType::Map | FieldType::StructList(_) | FieldType::StructMap(_) => continue,
+            FieldType::Bool => clap::Arg::new(flag_name.clone())
+                .long(flag_name.clone())
+                .num_args(0..=1)
+                .default_missing_value("true")
+                .require_equals(false),
+            FieldType::Scalar => clap::Arg::new(flag_name.clone())
+                .long(flag_name.clone())
+                .num_args(1),
+            FieldType::List => clap::Arg::new(flag_name.clone())
+                .long(flag_name.clone())
+                .num_args(1)
+                .action(clap::ArgAction::Append),
+        };
+        check_free(cmd, &flag_name, field.short)?;
+        let mut arg = arg;
+        if let Some(desc) = field.description {
+            arg = arg.help(desc);
+        }
+        if let Some(short) = field.short {
+            arg = arg.short(short);
+        }
+        *cmd = std::mem::take(cmd).arg(arg);
     }
-    cmd
+    Ok(())
 }
 
-fn extract_values(
-    matches: &clap::ArgMatches,
-    fields: &[FieldInfo],
-    prefix: &str,
-    separator: &str,
-) -> ValueMap {
-    let mut map = ValueMap::new();
-
-    for field in fields {
-        let flag_name = build_flag_name(prefix, separator, field.config_name);
-
-        match &field.field_type {
-            FieldType::Struct(sub_fields) => {
-                let nested = extract_values(matches, sub_fields, &flag_name, separator);
-                // Empty nested maps are omitted; the struct will get T::default()
-                // via `parse_nested` when the key is absent from the map.
-                if !nested.is_empty() {
-                    map.insert(field.config_name.to_string(), ConfigValue::Nested(nested));
-                }
-            }
-            FieldType::Bool => {
-                if matches.contains_id(&flag_name) && is_cli_provided(matches, &flag_name) {
-                    let val = matches
-                        .get_one::<String>(&flag_name)
-                        .map(|s| s.as_str())
-                        .unwrap_or("true");
-                    map.insert(field.config_name.to_string(), ConfigValue::Scalar(val.to_string()));
-                }
-            }
-            FieldType::Scalar => {
-                if let Some(val) = matches.get_one::<String>(&flag_name) {
-                    if is_cli_provided(matches, &flag_name) {
-                        map.insert(
-                            field.config_name.to_string(),
-                            ConfigValue::Scalar(val.clone()),
-                        );
-                    }
-                }
-            }
-            FieldType::List => {
-                if let Some(vals) = matches.get_many::<String>(&flag_name) {
-                    if is_cli_provided(matches, &flag_name) {
-                        let items: Vec<String> = vals.cloned().collect();
-                        if !items.is_empty() {
-                            map.insert(field.config_name.to_string(), ConfigValue::List(items));
-                        }
-                    }
-                }
-            }
+/// Parse args, returning the matches and the `--config` path if set.
+///
+/// clap errors, including `--help`/`--version`, are returned as
+/// `CLIError` for the app to handle.
+pub(crate) fn parse(
+    cmd: clap::Command,
+    args: &[String],
+    config_flag: Option<&str>,
+) -> Result<(clap::ArgMatches, Option<String>), ConfigulatorError> {
+    let matches = cmd
+        .try_get_matches_from(args)
+        .map_err(ConfigulatorError::CLIError)?;
+    let config_path = config_flag.and_then(|name| {
+        if matches.value_source(name) == Some(clap::parser::ValueSource::CommandLine) {
+            matches.get_one::<String>(name).cloned()
+        } else {
+            None
         }
-    }
-
-    map
+    });
+    Ok((matches, config_path))
 }

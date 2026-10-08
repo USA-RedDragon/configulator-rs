@@ -1,0 +1,5 @@
+error: Config cannot be derived for generic structs
+ --> tests/ui/generic-struct.rs:4:15
+  |
+4 | struct Generic<T: std::str::FromStr + Default> {
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

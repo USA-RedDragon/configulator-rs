@@ -1,0 +1,7 @@
+error: config names "my-name" and "my_name" collide under case and -/_ folding
+ --> tests/ui/collision.rs:3:10
+  |
+3 | #[derive(Config)]
+  |          ^^^^^^
+  |
+  = note: this error originates in the derive macro `Config` (in Nightly builds, run with -Z macro-backtrace for more info)

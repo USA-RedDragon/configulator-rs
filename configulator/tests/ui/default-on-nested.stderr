@@ -1,0 +1,6 @@
+error: `default` is only supported on scalar and Vec-of-scalar fields
+  --> tests/ui/default-on-nested.rs:11:5
+   |
+11 | /     #[configulator(name = "sub", nested, default = "nope")]
+12 | |     sub: Sub,
+   | |____________^

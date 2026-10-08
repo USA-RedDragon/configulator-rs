@@ -14,6 +14,12 @@ exclude = [".github/", "target/"]
 [lib]
 proc-macro = true
 
+[features]
+default = []
+file = []
+cli = []
+env = []
+
 [dependencies]
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
