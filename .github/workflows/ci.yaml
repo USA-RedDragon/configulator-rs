@@ -97,7 +97,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: USA-RedDragon/configulator
-          ref: 999f79bf403b5a02edad36334693d03c014b4109
+          ref: 477604628e68a80397902f537e36863fc7ff0e19
           path: spec-repo
       - name: Verify SPEC pin
         run: |
