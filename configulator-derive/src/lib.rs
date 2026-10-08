@@ -273,13 +273,10 @@ fn classify_inner(
 }
 
 impl Shape {
-    fn is_collection(&self) -> bool {
+    fn is_file_only(&self) -> bool {
         matches!(
             self,
-            Shape::VecLeaf { .. }
-                | Shape::MapLeaf { .. }
-                | Shape::VecNested { .. }
-                | Shape::MapNested { .. }
+            Shape::MapLeaf { .. } | Shape::VecNested { .. } | Shape::MapNested { .. }
         )
     }
 }
@@ -329,7 +326,7 @@ fn build_model(
             .clone()
             .unwrap_or_else(|| ident.unraw().to_string());
 
-        if shape.is_collection() {
+        if shape.is_file_only() {
             if let Some(env) = &attrs.env {
                 if env != "-" {
                     return Err(syn::Error::new_spanned(
@@ -1462,9 +1459,15 @@ mod tests {
 
     #[test]
     fn rejects_env_opt_in_on_collection() {
-        let err = derive(r#"struct Foo { #[configulator(name = "t", env = "T")] t: Vec<String> }"#)
-            .unwrap_err();
+        let err = derive(
+            r#"struct Foo { #[configulator(name = "t", env = "T")] t: std::collections::HashMap<String, String> }"#,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("file-only"));
+        assert!(derive(
+            r#"struct Foo { #[configulator(name = "t", env = "T", flag = "tt")] t: Vec<String> }"#
+        )
+        .is_ok());
     }
 
     #[test]

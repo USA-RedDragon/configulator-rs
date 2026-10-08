@@ -1,6 +1,6 @@
 error: `env = "..."` opt-in on a collection: collections are file-only (SPEC rule 6)
  --> tests/ui/env-optin-collection.rs:5:5
   |
-5 | /     #[configulator(name = "tags", env = "TAGS")]
-6 | |     tags: Vec<String>,
-  | |_____________________^
+5 | /     #[configulator(name = "labels", env = "LABELS")]
+6 | |     labels: std::collections::HashMap<String, String>,
+  | |_____________________________________________________^

@@ -2,8 +2,8 @@ use configulator::Config;
 
 #[derive(Config)]
 struct EnvOptIn {
-    #[configulator(name = "tags", env = "TAGS")]
-    tags: Vec<String>,
+    #[configulator(name = "labels", env = "LABELS")]
+    labels: std::collections::HashMap<String, String>,
 }
 
 fn main() {}

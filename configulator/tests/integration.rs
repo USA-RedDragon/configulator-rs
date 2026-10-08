@@ -1749,3 +1749,33 @@ fn empty_file_loads_as_no_keys_and_is_reported() {
     assert_eq!(config.port, 9001);
     assert_eq!(report.file(), Some(f.path().display().to_string().as_str()));
 }
+
+#[derive(Config, Debug, PartialEq)]
+struct ListOverrideConfig {
+    #[configulator(name = "tags", env = "MY_TAGS", flag = "my-tags")]
+    tags: Vec<String>,
+}
+
+impl Validate for ListOverrideConfig {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn env_and_flag_overrides_on_scalar_lists() {
+    let config = Configulator::<ListOverrideConfig>::new()
+        .with_environment_variables(env_opts("T_"))
+        .with_env_vars(env(&[("T_MY_TAGS", "a,b")]))
+        .load()
+        .unwrap();
+    assert_eq!(config.tags, vec!["a", "b"]);
+    let config = Configulator::<ListOverrideConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--my-tags", "c", "--my-tags", "d"]))
+        .load()
+        .unwrap();
+    assert_eq!(config.tags, vec!["c", "d"]);
+}
