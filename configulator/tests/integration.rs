@@ -983,6 +983,60 @@ fn field_named_like_old_sentinel_survives() {
     assert_eq!(config.config_file, "keep-me");
 }
 
+#[test]
+fn schema_and_sample() {
+    #[derive(Config, Debug)]
+    #[allow(dead_code)]
+    struct SchemaCfg {
+        #[configulator(name = "port", default = "8080", required, description = "listen port")]
+        port: u16,
+
+        #[configulator(name = "key", secret)]
+        key: String,
+
+        #[configulator(name = "sub", nested)]
+        sub: SchemaSub,
+
+        #[configulator(name = "tags", default = "a,b")]
+        tags: Vec<String>,
+    }
+    #[derive(Config, Debug)]
+    #[allow(dead_code)]
+    struct SchemaSub {
+        #[configulator(name = "host", default = "localhost", description = "bind host")]
+        host: String,
+    }
+    impl Validate for SchemaCfg {
+        fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    let schema = Configulator::<SchemaCfg>::json_schema();
+    for want in [
+        "\"required\"",
+        "\"port\"",
+        "\"listen port\"",
+        "\"additionalProperties\": false",
+        "\"default\": 8080",
+        "\"title\": \"SchemaCfg\"",
+        "\"type\": \"integer\"",
+    ] {
+        assert!(schema.contains(want), "schema missing {want}:\n{schema}");
+    }
+
+    let sample = Configulator::<SchemaCfg>::sample_config();
+    for want in [
+        "port: 8080",
+        "key: \"(secret)\"",
+        "# bind host",
+        "host: \"localhost\"",
+        "tags: [a,b]",
+    ] {
+        assert!(sample.contains(want), "sample missing {want}:\n{sample}");
+    }
+}
+
 #[derive(Config, Debug)]
 struct RequiredNestedConfig {
     #[configulator(name = "db", nested, required)]
@@ -1151,6 +1205,42 @@ fn element_defaults_use_the_array_separator() {
         .load_without_validation()
         .unwrap();
     assert_eq!(config.servers[0].tags, vec!["a", "b"]);
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+#[configulator(allow_unknown_fields)]
+struct LooseConfig {
+    #[configulator(name = "a", default = "1")]
+    a: u16,
+    #[configulator(name = "strict", nested)]
+    strict: PoolConfig,
+}
+
+#[test]
+fn schema_follows_allow_unknown_fields() {
+    let schema = Configulator::<LooseConfig>::json_schema();
+    assert_eq!(
+        schema.matches("\"additionalProperties\": false").count(),
+        1,
+        "{schema}"
+    );
+}
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct EnvSkipConfig {
+    #[configulator(name = "db", nested, env = "-")]
+    db: PoolConfig,
+}
+
+#[test]
+fn markdown_skips_env_for_children_of_env_skipped_struct() {
+    use configulator::HasShadow;
+    let md =
+        configulator::__schema::markdown("EnvSkipConfig", &EnvSkipConfig::fields(), ".", "T_", "_");
+    assert!(!md.contains("T_DB_SIZE"), "{md}");
+    assert!(md.contains("--db.size"), "{md}");
 }
 
 #[derive(Default)]

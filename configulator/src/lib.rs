@@ -193,6 +193,7 @@ mod field_info;
 mod file;
 mod options;
 mod report;
+mod schema;
 mod shadow;
 
 pub use configulator_derive::Config;
@@ -215,6 +216,10 @@ pub use crate::shadow::HasShadow;
 pub use crate::field_info::{FieldInfo, FieldType, ScalarHint};
 #[doc(hidden)]
 pub use crate::shadow::__private;
+#[doc(hidden)]
+pub mod __schema {
+    pub use crate::schema::{json_schema, markdown, sample_config};
+}
 
 /// Trait for user-defined config validation.
 ///
