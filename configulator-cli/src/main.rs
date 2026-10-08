@@ -16,8 +16,9 @@ use syn::ext::IdentExt;
 
 #[derive(Parser)]
 #[command(
+    group(clap::ArgGroup::new("output_file").args(["markdown_file", "sample_file"])),
     name = "configulator",
-    about = "Emit a JSON Schema and/or commented sample config for a #[derive(Config)] struct"
+    about = "Print a JSON Schema, sample config, or Markdown table for a #[derive(Config)] struct"
 )]
 struct Args {
     /// Config root type name (e.g. AppConfig)
@@ -52,6 +53,21 @@ struct Args {
     #[arg(long, default_value = ".")]
     flag_separator: String,
 
+    /// With --markdown, write the table between the
+    /// <!-- configulator:begin --> and <!-- configulator:end --> markers in
+    /// this file instead of stdout
+    #[arg(long, requires = "markdown")]
+    markdown_file: Option<PathBuf>,
+
+    /// With --sample, write the sample to this file instead of stdout
+    #[arg(long, requires = "sample")]
+    sample_file: Option<PathBuf>,
+
+    /// With --markdown-file or --sample-file, change nothing and exit 1 if
+    /// the file is out of date
+    #[arg(long, requires = "output_file")]
+    check: bool,
+
     /// Crate directory to scan for .rs files (target/ is skipped)
     #[arg(long, default_value = ".")]
     dir: PathBuf,
@@ -64,7 +80,7 @@ fn main() -> ExitCode {
         .filter(|b| **b)
         .count();
     if selected != 1 {
-        eprintln!("pass exactly one of --schema, --sample, or --markdown; output goes to stdout, pipe it where you want it");
+        eprintln!("pass exactly one of --schema, --sample, or --markdown");
         return ExitCode::FAILURE;
     }
     match run(&args) {
@@ -93,18 +109,91 @@ fn run(args: &Args) -> Result<(), String> {
             allows_unknown(&structs[&args.r#type]),
         )
     } else if args.sample {
-        encode_sample(&fields, &args.r#type, &args.format)?
+        let sample = encode_sample(&fields, &args.r#type, &args.format)?;
+        if let Some(path) = &args.sample_file {
+            let old = match std::fs::read_to_string(path) {
+                Ok(s) => Some(s),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            };
+            if old.as_deref() == Some(sample.as_str()) {
+                return Ok(());
+            }
+            if args.check {
+                return Err(format!(
+                    "{0} is out of date; run configulator --sample --sample-file {0}",
+                    path.display()
+                ));
+            }
+            std::fs::write(path, &sample).map_err(|e| format!("{}: {e}", path.display()))?;
+            eprintln!("configulator: updated {}", path.display());
+            return Ok(());
+        }
+        sample
     } else {
-        configulator::__schema::markdown(
+        let table = configulator::__schema::markdown(
             &args.r#type,
             &fields,
             &args.flag_separator,
             &args.env_prefix,
             &args.env_separator,
-        )
+        );
+        if let Some(path) = &args.markdown_file {
+            let table = table.split_once("\n\n").map_or(table.as_str(), |(_, t)| t);
+            if update_markdown_file(path, table, args.check)? {
+                eprintln!("configulator: updated {}", path.display());
+            }
+            return Ok(());
+        }
+        table
     };
     print!("{body}");
     Ok(())
+}
+
+const MARKDOWN_BEGIN: &str = "<!-- configulator:begin -->";
+const MARKDOWN_END: &str = "<!-- configulator:end -->";
+
+/// Replace everything between the begin and end markers in `doc` with
+/// `table`, keeping the markers.
+fn splice_markdown(doc: &str, table: &str) -> Result<String, String> {
+    let (Some(begin), Some(end)) = (doc.find(MARKDOWN_BEGIN), doc.find(MARKDOWN_END)) else {
+        return Err(format!(
+            "needs a {MARKDOWN_BEGIN} line followed by a {MARKDOWN_END} line"
+        ));
+    };
+    if end < begin {
+        return Err(format!(
+            "needs a {MARKDOWN_BEGIN} line followed by a {MARKDOWN_END} line"
+        ));
+    }
+    if doc[end + MARKDOWN_END.len()..].contains(MARKDOWN_BEGIN) {
+        return Err(format!("has more than one {MARKDOWN_BEGIN} marker"));
+    }
+    Ok(format!(
+        "{}\n\n{}\n\n{}",
+        &doc[..begin + MARKDOWN_BEGIN.len()],
+        table.trim_end_matches('\n'),
+        &doc[end..]
+    ))
+}
+
+/// Write `table` into `path` between the markers. With `check` set, write
+/// nothing and fail if the file would change. Returns whether it changed.
+fn update_markdown_file(path: &Path, table: &str, check: bool) -> Result<bool, String> {
+    let doc = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let out = splice_markdown(&doc, table).map_err(|e| format!("{}: {e}", path.display()))?;
+    if out == doc {
+        return Ok(false);
+    }
+    if check {
+        return Err(format!(
+            "{0} is out of date; run configulator --markdown --markdown-file {0}",
+            path.display()
+        ));
+    }
+    std::fs::write(path, out).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(true)
 }
 
 fn collect_structs(dir: &Path) -> Result<HashMap<String, syn::ItemStruct>, String> {
@@ -612,5 +701,144 @@ struct SchemaSub {{
         let structs = collect_structs(dir.path()).unwrap();
         let err = build_fields("Nope", &structs, &mut Vec::new()).unwrap_err();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn splice_keeps_markers_and_replaces_between() {
+        let doc = "# App\n\n<!-- configulator:begin -->\nold\n<!-- configulator:end -->\n\nmore\n";
+        let out = splice_markdown(doc, "| a |\n").unwrap();
+        assert_eq!(
+            out,
+            "# App\n\n<!-- configulator:begin -->\n\n| a |\n\n<!-- configulator:end -->\n\nmore\n"
+        );
+        assert_eq!(splice_markdown(&out, "| a |\n").unwrap(), out);
+    }
+
+    #[test]
+    fn splice_rejects_bad_markers() {
+        assert!(splice_markdown("no markers", "x").is_err());
+        assert!(
+            splice_markdown("<!-- configulator:end --> <!-- configulator:begin -->", "x").is_err()
+        );
+        let two = "<!-- configulator:begin --><!-- configulator:end --><!-- configulator:begin --><!-- configulator:end -->";
+        assert!(splice_markdown(two, "x")
+            .unwrap_err()
+            .contains("more than one"));
+    }
+
+    #[test]
+    fn markdown_file_writes_then_check_passes() {
+        let dir = fixture();
+        let readme = dir.path().join("README.md");
+        std::fs::write(
+            &readme,
+            "## Configuration\n\n<!-- configulator:begin -->\n<!-- configulator:end -->\n",
+        )
+        .unwrap();
+        let args = |extra: &[&str]| {
+            let mut a = vec![
+                "configulator",
+                "--type",
+                "SchemaCfg",
+                "--markdown",
+                "--env-prefix",
+                "APP__",
+                "--dir",
+                dir.path().to_str().unwrap(),
+                "--markdown-file",
+                readme.to_str().unwrap(),
+            ];
+            a.extend_from_slice(extra);
+            Args::parse_from(a)
+        };
+
+        let err = run(&args(&["--check"])).unwrap_err();
+        assert!(err.contains("is out of date"), "{err}");
+
+        run(&args(&[])).unwrap();
+        let written = std::fs::read_to_string(&readme).unwrap();
+        assert!(!written.contains("# SchemaCfg configuration"), "{written}");
+        assert!(written.contains("`APP__SUB__HOST`"), "{written}");
+        assert!(
+            written.ends_with("<!-- configulator:end -->\n"),
+            "{written}"
+        );
+
+        run(&args(&["--check"])).unwrap();
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), written);
+    }
+
+    #[test]
+    fn markdown_file_flag_dependencies() {
+        assert!(Args::try_parse_from([
+            "configulator",
+            "-t",
+            "X",
+            "--schema",
+            "--markdown-file",
+            "R.md"
+        ])
+        .is_err());
+        assert!(
+            Args::try_parse_from(["configulator", "-t", "X", "--markdown", "--check"]).is_err()
+        );
+    }
+
+    #[test]
+    fn sample_file_creates_then_check_passes() {
+        let dir = fixture();
+        let sample = dir.path().join("config.example.yaml");
+        let args = |extra: &[&str]| {
+            let mut a = vec![
+                "configulator",
+                "--type",
+                "SchemaCfg",
+                "--sample",
+                "--dir",
+                dir.path().to_str().unwrap(),
+                "--sample-file",
+                sample.to_str().unwrap(),
+            ];
+            a.extend_from_slice(extra);
+            Args::parse_from(a)
+        };
+
+        let err = run(&args(&["--check"])).unwrap_err();
+        assert!(err.contains("is out of date"), "{err}");
+        assert!(!sample.exists());
+
+        run(&args(&[])).unwrap();
+        let written = std::fs::read_to_string(&sample).unwrap();
+        assert!(written.contains("port: 8080"), "{written}");
+
+        run(&args(&["--check"])).unwrap();
+        std::fs::write(&sample, "stale: true\n").unwrap();
+        assert!(run(&args(&["--check"])).is_err());
+        run(&args(&[])).unwrap();
+        assert_eq!(std::fs::read_to_string(&sample).unwrap(), written);
+    }
+
+    #[test]
+    fn sample_file_flag_dependencies() {
+        assert!(Args::try_parse_from([
+            "configulator",
+            "-t",
+            "X",
+            "--markdown",
+            "--sample-file",
+            "c.yaml"
+        ])
+        .is_err());
+        assert!(Args::try_parse_from(["configulator", "-t", "X", "--sample", "--check"]).is_err());
+        assert!(Args::try_parse_from([
+            "configulator",
+            "-t",
+            "X",
+            "--sample",
+            "--sample-file",
+            "c.yaml",
+            "--check"
+        ])
+        .is_ok());
     }
 }
