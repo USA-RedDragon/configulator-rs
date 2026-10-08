@@ -364,8 +364,86 @@ pub mod __private {
         }
     }
 
+    #[cfg(feature = "file")]
+    std::thread_local! {
+        static DE_PATH: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+        static DE_PATHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static DE_MESSAGE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    }
+
+    #[cfg(feature = "file")]
+    struct PathGuard(usize);
+
+    #[cfg(feature = "file")]
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            DE_PATH.with(|p| p.borrow_mut().truncate(self.0));
+        }
+    }
+
+    #[cfg(feature = "file")]
+    fn push_path(segment: &str, index: bool) -> PathGuard {
+        DE_PATH.with(|p| {
+            let mut p = p.borrow_mut();
+            let len = p.len();
+            if !p.is_empty() && !index {
+                p.push('.');
+            }
+            p.push_str(segment);
+            PathGuard(len)
+        })
+    }
+
+    /// Clear the decode path before a file is decoded.
+    #[cfg(feature = "file")]
+    pub fn de_reset() {
+        DE_PATH.with(|p| p.borrow_mut().clear());
+        DE_PATHED.with(|f| f.set(false));
+    }
+
+    /// Whether the last decode error already names its config path.
+    #[cfg(feature = "file")]
+    pub fn de_pathed() -> bool {
+        DE_PATHED.with(|f| f.get())
+    }
+
+    /// The path-prefixed message built for the last decode error.
+    #[cfg(feature = "file")]
+    pub fn de_message() -> String {
+        DE_MESSAGE.with(|m| m.borrow().clone())
+    }
+
+    /// The key named by a serde "unknown field" error.
+    #[cfg(feature = "file")]
+    pub fn unknown_field(msg: &str) -> Option<&str> {
+        let rest = &msg[msg.find("unknown field `")? + "unknown field `".len()..];
+        rest.split('`').next()
+    }
+
+    #[cfg(feature = "file")]
+    fn path_err<E: serde::de::Error>(e: E, secret: bool) -> E {
+        if de_pathed() {
+            return e;
+        }
+        DE_PATHED.with(|f| f.set(true));
+        let msg = e.to_string();
+        let mut path = DE_PATH.with(|p| p.borrow().clone());
+        if let Some(key) = unknown_field(&msg) {
+            path = join(&path, key);
+        }
+        let full = if secret {
+            format!("{path}: invalid value")
+        } else if msg.starts_with(&format!("{path}: ")) {
+            msg
+        } else {
+            format!("{path}: {msg}")
+        };
+        DE_MESSAGE.with(|m| *m.borrow_mut() = full.clone());
+        E::custom(full)
+    }
+
     /// `deserialize_with` target for shadow leaf fields. `name` is baked in
-    /// by the derive so parse errors carry the field name.
+    /// by the derive so decode errors carry the full config path.
     #[cfg(feature = "file")]
     pub fn leaf_named<'de, D, T>(d: D, name: &str, secret: bool) -> Result<Option<T>, D::Error>
     where
@@ -373,13 +451,119 @@ pub mod __private {
         T: FromStr + 'static,
         T::Err: fmt::Display,
     {
-        d.deserialize_any(ScalarVisitor::<T>::new()).map_err(|e| {
-            if secret {
-                serde::de::Error::custom(format_args!("{name}: invalid value"))
-            } else {
-                serde::de::Error::custom(format_args!("{name}: {e}"))
+        let _g = push_path(name, false);
+        d.deserialize_any(ScalarVisitor::<T>::new())
+            .map_err(|e| path_err(e, secret))
+    }
+
+    /// `deserialize_with` target for nested struct fields.
+    #[cfg(feature = "file")]
+    pub fn de_nested<'de, D, S>(d: D, name: &str) -> Result<Option<S>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        S: serde::Deserialize<'de>,
+    {
+        let _g = push_path(name, false);
+        <Option<S> as serde::Deserialize>::deserialize(d).map_err(|e| path_err(e, false))
+    }
+
+    #[cfg(feature = "file")]
+    struct ListVisitor<S>(bool, std::marker::PhantomData<S>);
+
+    #[cfg(feature = "file")]
+    impl<'de, S: serde::Deserialize<'de>> serde::de::Visitor<'de> for ListVisitor<S> {
+        type Value = Option<Vec<S>>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a list")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            loop {
+                let _g = push_path(&format!("[{}]", out.len()), true);
+                match seq.next_element::<S>() {
+                    Ok(Some(v)) => out.push(v),
+                    Ok(None) => return Ok(Some(out)),
+                    Err(e) => return Err(path_err(e, self.0)),
+                }
             }
-        })
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+    }
+
+    /// `deserialize_with` target for list fields.
+    #[cfg(feature = "file")]
+    pub fn de_list<'de, D, S>(d: D, name: &str, secret: bool) -> Result<Option<Vec<S>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        S: serde::Deserialize<'de>,
+    {
+        let _g = push_path(name, false);
+        d.deserialize_any(ListVisitor::<S>(secret, std::marker::PhantomData))
+            .map_err(|e| path_err(e, secret))
+    }
+
+    #[cfg(feature = "file")]
+    struct MapVisitor<K, S, M>(bool, std::marker::PhantomData<(K, S, M)>);
+
+    #[cfg(feature = "file")]
+    impl<'de, K, S, M> serde::de::Visitor<'de> for MapVisitor<K, S, M>
+    where
+        K: serde::Deserialize<'de> + fmt::Display,
+        S: serde::Deserialize<'de>,
+        M: Default + Extend<(K, S)>,
+    {
+        type Value = Option<M>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a map")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut out = M::default();
+            while let Some(k) = map.next_key::<K>()? {
+                let _g = push_path(&quote_key(&k.to_string()), false);
+                let v = map.next_value::<S>().map_err(|e| path_err(e, self.0))?;
+                out.extend([(k, v)]);
+            }
+            Ok(Some(out))
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+            d.deserialize_any(self)
+        }
+    }
+
+    /// `deserialize_with` target for map fields.
+    #[cfg(feature = "file")]
+    pub fn de_map<'de, D, K, S, M>(d: D, name: &str, secret: bool) -> Result<Option<M>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        K: serde::Deserialize<'de> + fmt::Display,
+        S: serde::Deserialize<'de>,
+        M: Default + Extend<(K, S)>,
+    {
+        let _g = push_path(name, false);
+        d.deserialize_any(MapVisitor::<K, S, M>(secret, std::marker::PhantomData))
+            .map_err(|e| path_err(e, secret))
     }
 
     #[cfg(feature = "file")]

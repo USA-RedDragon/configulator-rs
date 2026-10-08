@@ -2228,3 +2228,29 @@ fn command_exposes_flags_and_path_hints() {
     assert_eq!(hint("data-dir"), Some(clap::ValueHint::AnyPath));
     assert_eq!(hint("config"), Some(clap::ValueHint::FilePath));
 }
+
+#[test]
+fn decode_errors_name_full_paths() {
+    let msg = |text: &str| {
+        let f = yaml_file(text);
+        Configulator::<CollectionsConfig>::new()
+            .with_file(yaml_opts(f.path()))
+            .load()
+            .unwrap_err()
+            .to_string()
+    };
+    let m = msg("servers:\n  - addr: a\n  - weight: w\n");
+    assert!(m.contains("servers[1].weight: "), "{m}");
+    assert!(!m.contains("servers[1].weight: servers[1].weight"), "{m}");
+    let m = msg("pools:\n  p:\n    zz: 1\n");
+    assert!(m.contains("pools.p.zz: "), "{m}");
+    let m = msg("nope: 1\n");
+    assert!(m.contains("nope: "), "{m}");
+    let f = yaml_file("database:\n  pool:\n    size: x\n");
+    let m = Configulator::<NestedConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap_err()
+        .to_string();
+    assert!(m.contains("database.pool.size: "), "{m}");
+}

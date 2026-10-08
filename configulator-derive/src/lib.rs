@@ -518,13 +518,8 @@ fn emit_shadow_struct(
             let ty = shadow_field_type(cr, &m.shape);
             let config_name = &m.config_name;
             if cfg!(feature = "file") {
-                let de_with = match m.shape {
-                    Shape::Bool { .. } | Shape::Leaf { .. } => {
-                        let de_fn = format!("{shadow_ident}::__de_{}", ident.unraw());
-                        quote!(#[serde(deserialize_with = #de_fn)])
-                    }
-                    _ => quote!(),
-                };
+                let de_fn = format!("{shadow_ident}::__de_{}", ident.unraw());
+                let de_with = quote!(#[serde(deserialize_with = #de_fn)]);
                 quote! {
                     #[serde(rename = #config_name, default)]
                     #de_with
@@ -570,26 +565,51 @@ fn emit_de_fns(cr: &syn::Path, shadow_ident: &syn::Ident, model: &[FieldModel]) 
     }
     let fns: Vec<TokenStream2> = model
         .iter()
-        .filter_map(|m| {
-            let inner: TokenStream2 = match &m.shape {
-                Shape::Bool { .. } => quote!(bool),
-                Shape::Leaf { ty, .. } => quote!(#ty),
-                _ => return None,
-            };
+        .map(|m| {
             let de_ident = format_ident!("__de_{}", m.ident);
             let config_name = &m.config_name;
             let secret = m.attrs.secret;
-            Some(quote! {
+            let ty = shadow_field_type(cr, &m.shape);
+            let body = match &m.shape {
+                Shape::Bool { .. } => quote!(#cr::__private::leaf_named::<D, bool>(d, #config_name, #secret)),
+                Shape::Leaf { ty, .. } => {
+                    quote!(#cr::__private::leaf_named::<D, #ty>(d, #config_name, #secret))
+                }
+                Shape::Nested { ty, .. } => quote! {
+                    #cr::__private::de_nested::<D, <#ty as #cr::HasShadow>::Shadow>(d, #config_name)
+                },
+                Shape::VecLeaf { elem } => quote! {
+                    #cr::__private::de_list::<D, #cr::__private::Leaf<#elem>>(d, #config_name, #secret)
+                },
+                Shape::VecNested { elem } => quote! {
+                    #cr::__private::de_list::<D, <#elem as #cr::HasShadow>::Shadow>(d, #config_name, #secret)
+                },
+                Shape::MapLeaf { kind, key, val } => {
+                    let map = map_type(kind);
+                    quote! {
+                        #cr::__private::de_map::<D, #key, #cr::__private::Leaf<#val>, #map<#key, #cr::__private::Leaf<#val>>>(
+                            d, #config_name, #secret,
+                        )
+                    }
+                }
+                Shape::MapNested { kind, key, val } => {
+                    let map = map_type(kind);
+                    quote! {
+                        #cr::__private::de_map::<D, #key, <#val as #cr::HasShadow>::Shadow, #map<#key, <#val as #cr::HasShadow>::Shadow>>(
+                            d, #config_name, #secret,
+                        )
+                    }
+                }
+            };
+            quote! {
                 #[doc(hidden)]
-                pub fn #de_ident<'de, D>(
-                    d: D,
-                ) -> ::std::result::Result<::std::option::Option<#inner>, D::Error>
+                pub fn #de_ident<'de, D>(d: D) -> ::std::result::Result<#ty, D::Error>
                 where
                     D: #cr::__private::serde::Deserializer<'de>,
                 {
-                    #cr::__private::leaf_named(d, #config_name, #secret)
+                    #body
                 }
-            })
+            }
         })
         .collect();
     if fns.is_empty() {

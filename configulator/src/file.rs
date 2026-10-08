@@ -103,11 +103,30 @@ fn parse<C: HasShadow>(
     if contents.is_empty() {
         return Ok(C::Shadow::default());
     }
+    crate::shadow::__private::de_reset();
     opts.loader.load(contents).map_err(|e| match e {
         ConfigulatorError::DecodeError { message, .. } => ConfigulatorError::DecodeError {
             path: path.to_path_buf(),
-            message,
+            message: tidy_decode_message(message),
         },
         other => other,
     })
+}
+
+fn tidy_decode_message(message: String) -> String {
+    use crate::shadow::__private::{de_message, de_pathed, unknown_field};
+    if !de_pathed() {
+        if let Some(key) = unknown_field(&message) {
+            return format!("{key}: {message}");
+        }
+        return message;
+    }
+    let ours = de_message();
+    if ours.contains(" at line ") {
+        return ours;
+    }
+    match message.rfind(" at line ") {
+        Some(i) => format!("{ours}{}", &message[i..]),
+        None => ours,
+    }
 }
