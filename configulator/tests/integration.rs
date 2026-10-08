@@ -1362,3 +1362,83 @@ fn print_config_without_debug() {
     assert!(out.contains("token = (no Debug impl)"), "{out}");
     assert!(out.contains("port = 1"), "{out}");
 }
+
+#[derive(Config, Debug, PartialEq)]
+struct NcRule {
+    #[configulator(name = "from")]
+    from: i32,
+    #[configulator(name = "range", default = "1")]
+    range: i32,
+    #[configulator(name = "on", default = "true")]
+    on: bool,
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct NcLevel {
+    #[configulator(name = "level", default = "7")]
+    level: i32,
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct NcPeer {
+    #[configulator(name = "name")]
+    name: String,
+    #[configulator(name = "slots", default = "3")]
+    slots: i32,
+    #[configulator(name = "rules", nested)]
+    rules: Vec<NcRule>,
+    #[configulator(name = "tags", nested)]
+    tags: HashMap<String, NcRule>,
+    #[configulator(name = "inner", nested)]
+    inner: NcLevel,
+    #[configulator(name = "opt", nested)]
+    opt: Option<NcLevel>,
+}
+
+#[derive(Config, Debug, PartialEq)]
+struct NcCfg {
+    #[configulator(name = "peers", nested)]
+    peers: Vec<NcPeer>,
+    #[configulator(name = "by-name", nested)]
+    by_name: HashMap<String, NcPeer>,
+}
+
+impl Validate for NcCfg {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn nested_collections_inside_collection_elements() {
+    let f = yaml_file(
+        r#"{"peers":[{"name":"a","rules":[{"from":1},{"from":2,"range":5,"on":false}],"tags":{"x":{"from":9}},"opt":{}}],"by-name":{"b":{"name":"b","rules":[{"from":4}]}}}"#,
+    );
+    let (config, report) = Configulator::<NcCfg>::new()
+        .with_file(yaml_opts(f.path()))
+        .load_with_report()
+        .unwrap();
+    let rule = |from, range, on| NcRule { from, range, on };
+    let p = &config.peers[0];
+    assert_eq!(p.name, "a");
+    assert_eq!(p.slots, 3);
+    assert_eq!(p.rules, vec![rule(1, 1, true), rule(2, 5, false)]);
+    assert_eq!(p.tags["x"], rule(9, 1, true));
+    assert_eq!(p.inner.level, 7);
+    assert_eq!(p.opt, Some(NcLevel { level: 7 }));
+    let b = &config.by_name["b"];
+    assert_eq!(b.slots, 3);
+    assert_eq!(b.rules, vec![rule(4, 1, true)]);
+
+    let o = |path: &str| report.origin(path).map(|o| (o.layer, o.detail.clone()));
+    assert_eq!(
+        o("peers[0].rules[0].range"),
+        Some((Layer::Default, "element default".into()))
+    );
+    assert_eq!(o("peers[0].rules[1].range").map(|x| x.0), Some(Layer::File));
+    assert_eq!(
+        o("by-name.b.rules[0].on").map(|x| x.0),
+        Some(Layer::Default)
+    );
+    assert_eq!(o("peers[0].opt.level").map(|x| x.0), Some(Layer::Default));
+}
