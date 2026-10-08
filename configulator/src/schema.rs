@@ -78,13 +78,13 @@ fn write_json(v: &J, indent: usize, out: &mut String) {
 /// Render a JSON Schema (draft-07 subset) for a config type: types,
 /// descriptions, defaults, required, and `additionalProperties: false`
 /// unless the struct has `allow_unknown_fields`.
-pub fn json_schema(type_name: &str, fields: &[FieldInfo], allow_unknown: bool) -> String {
+pub fn json_schema(fields: &[FieldInfo], allow_unknown: bool) -> String {
     let mut root = schema_object(fields, allow_unknown);
     root.push((
         "$schema".into(),
         J::Str("http://json-schema.org/draft-07/schema#".into()),
     ));
-    root.push(("title".into(), J::Str(type_name.into())));
+    root.push(("title".into(), J::Str("Configuration".into())));
     let mut out = String::new();
     write_json(&J::Obj(root), 0, &mut out);
     out.push('\n');
@@ -196,8 +196,8 @@ fn schema_default(f: &FieldInfo, default: &str) -> Option<J> {
 
 /// Render a commented YAML sample: every key at its default,
 /// descriptions as comments. Always YAML, whatever loader the app uses.
-pub fn sample_config(type_name: &str, fields: &[FieldInfo]) -> String {
-    let mut b = format!("# Sample configuration for {type_name}.\n");
+pub fn sample_config(fields: &[FieldInfo]) -> String {
+    let mut b = "# Sample configuration\n".to_string();
     sample_fields(&mut b, fields, 0);
     b
 }
@@ -328,18 +328,12 @@ fn sample_value(f: &FieldInfo) -> String {
 /// file-only, so their env and flag cells hold an em dash character.
 /// Struct-collection element fields appear as `servers[].addr` and
 /// `pools.<key>.size` rows.
-pub fn markdown(
-    type_name: &str,
-    fields: &[FieldInfo],
-    flag_sep: &str,
-    env_prefix: &str,
-    env_sep: &str,
-) -> String {
+pub fn markdown(fields: &[FieldInfo], flag_sep: &str, env_prefix: &str, env_sep: &str) -> String {
     let mut rows: Vec<[String; 6]> = Vec::new();
     markdown_fields(
         &mut rows, fields, "", env_prefix, env_sep, "", flag_sep, true, true,
     );
-    render_table(type_name, rows)
+    render_table(rows)
 }
 
 const HEADER: [&str; 6] = [
@@ -351,7 +345,7 @@ const HEADER: [&str; 6] = [
     "Description",
 ];
 
-fn render_table(type_name: &str, rows: Vec<[String; 6]>) -> String {
+fn render_table(rows: Vec<[String; 6]>) -> String {
     let mut widths: Vec<usize> = HEADER.iter().map(|h| h.chars().count()).collect();
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {
@@ -363,7 +357,7 @@ fn render_table(type_name: &str, rows: Vec<[String; 6]>) -> String {
         out.extend(std::iter::repeat_n(' ', w - cell.chars().count()));
         out
     };
-    let mut b = format!("# {type_name} configuration\n\n");
+    let mut b = "# Configuration\n\n".to_string();
     let header: Vec<String> = HEADER
         .iter()
         .zip(&widths)

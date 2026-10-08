@@ -103,13 +103,9 @@ fn run(args: &Args) -> Result<(), String> {
         return Err("--format only applies to --sample".to_string());
     }
     let body = if args.schema {
-        configulator::__schema::json_schema(
-            &args.r#type,
-            &fields,
-            allows_unknown(&structs[&args.r#type]),
-        )
+        configulator::__schema::json_schema(&fields, allows_unknown(&structs[&args.r#type]))
     } else if args.sample {
-        let sample = encode_sample(&fields, &args.r#type, &args.format)?;
+        let sample = encode_sample(&fields, &args.format)?;
         if let Some(path) = &args.sample_file {
             let old = match std::fs::read_to_string(path) {
                 Ok(s) => Some(s),
@@ -132,7 +128,6 @@ fn run(args: &Args) -> Result<(), String> {
         sample
     } else {
         let table = configulator::__schema::markdown(
-            &args.r#type,
             &fields,
             &args.flag_separator,
             &args.env_prefix,
@@ -554,9 +549,9 @@ fn sample_tree(fields: &[FieldInfo]) -> Sv {
     Sv::Map(pairs)
 }
 
-fn encode_sample(fields: &[FieldInfo], type_name: &str, format: &str) -> Result<String, String> {
+fn encode_sample(fields: &[FieldInfo], format: &str) -> Result<String, String> {
     match format {
-        "yaml" => Ok(configulator::__schema::sample_config(type_name, fields)),
+        "yaml" => Ok(configulator::__schema::sample_config(fields)),
         "json" => {
             let mut out =
                 serde_json::to_string_pretty(&sample_tree(fields)).map_err(|e| e.to_string())?;
@@ -616,7 +611,7 @@ struct SchemaSub {{
         let structs = collect_structs(dir.path()).unwrap();
         let fields = build_fields("SchemaCfg", &structs, &mut Vec::new()).unwrap();
 
-        let schema = configulator::__schema::json_schema("SchemaCfg", &fields, false);
+        let schema = configulator::__schema::json_schema(&fields, false);
         for want in [
             "\"required\"",
             "\"port\"",
@@ -627,7 +622,7 @@ struct SchemaSub {{
             assert!(schema.contains(want), "schema missing {want}:\n{schema}");
         }
 
-        let sample = configulator::__schema::sample_config("SchemaCfg", &fields);
+        let sample = configulator::__schema::sample_config(&fields);
         for want in [
             "port: 8080",
             "# key: \"(secret)\"",
@@ -644,7 +639,7 @@ struct SchemaSub {{
         let dir = fixture();
         let structs = collect_structs(dir.path()).unwrap();
         let fields = build_fields("SchemaCfg", &structs, &mut Vec::new()).unwrap();
-        let md = configulator::__schema::markdown("SchemaCfg", &fields, ".", "APP_", "_");
+        let md = configulator::__schema::markdown(&fields, ".", "APP_", "_");
         let squeezed: String = md
             .lines()
             .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -668,13 +663,13 @@ struct SchemaSub {{
         let structs = collect_structs(dir.path()).unwrap();
         let fields = build_fields("SchemaCfg", &structs, &mut Vec::new()).unwrap();
 
-        let json = encode_sample(&fields, "SchemaCfg", "json").unwrap();
+        let json = encode_sample(&fields, "json").unwrap();
         for want in ["\"port\": 8080", "\"host\": \"localhost\"", "\"a\","] {
             assert!(json.contains(want), "json sample missing {want}:\n{json}");
         }
         assert!(!json.contains("\"key\""), "{json}");
 
-        let toml = encode_sample(&fields, "SchemaCfg", "toml").unwrap();
+        let toml = encode_sample(&fields, "toml").unwrap();
         for want in ["port = 8080", "[sub]", "host = \"localhost\""] {
             assert!(toml.contains(want), "toml sample missing {want}:\n{toml}");
         }
@@ -684,7 +679,7 @@ struct SchemaSub {{
             "toml scalars must precede tables:\n{toml}"
         );
 
-        assert!(encode_sample(&fields, "SchemaCfg", "ini").is_err());
+        assert!(encode_sample(&fields, "ini").is_err());
     }
 
     #[test]
@@ -839,7 +834,7 @@ struct SchemaSub {{
         let dir = fixture();
         let structs = collect_structs(dir.path()).unwrap();
         let fields = build_fields("SchemaCfg", &structs, &mut Vec::new()).unwrap();
-        let md = configulator::__schema::markdown("SchemaCfg", &fields, ".", "", "__");
+        let md = configulator::__schema::markdown(&fields, ".", "", "__");
         assert!(md.contains("`-p`, `--port`"), "{md}");
     }
 }

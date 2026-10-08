@@ -1090,7 +1090,7 @@ fn schema_and_sample() {
         "\"listen port\"",
         "\"additionalProperties\": false",
         "\"default\": 8080",
-        "\"title\": \"SchemaCfg\"",
+        "\"title\": \"Configuration\"",
         "\"type\": \"integer\"",
     ] {
         assert!(schema.contains(want), "schema missing {want}:\n{schema}");
@@ -1308,8 +1308,7 @@ struct EnvSkipConfig {
 #[test]
 fn markdown_skips_env_for_children_of_env_skipped_struct() {
     use configulator::HasShadow;
-    let md =
-        configulator::__schema::markdown("EnvSkipConfig", &EnvSkipConfig::fields(), ".", "T_", "_");
+    let md = configulator::__schema::markdown(&EnvSkipConfig::fields(), ".", "T_", "_");
     assert!(!md.contains("T_DB_SIZE"), "{md}");
     assert!(md.contains("--db.size"), "{md}");
 }
@@ -1324,13 +1323,7 @@ struct EmptyDefaultConfig {
 #[test]
 fn markdown_leaves_empty_default_cell_blank() {
     use configulator::HasShadow;
-    let md = configulator::__schema::markdown(
-        "EmptyDefaultConfig",
-        &EmptyDefaultConfig::fields(),
-        ".",
-        "",
-        "_",
-    );
+    let md = configulator::__schema::markdown(&EmptyDefaultConfig::fields(), ".", "", "_");
     assert!(!md.contains("``"), "{md}");
 }
 
@@ -1537,13 +1530,7 @@ fn secret_defaults_stay_out_of_generated_docs() {
     use configulator::HasShadow;
     let schema = Configulator::<SecretDefaultConfig>::json_schema();
     let sample = Configulator::<SecretDefaultConfig>::sample_config();
-    let md = configulator::__schema::markdown(
-        "SecretDefaultConfig",
-        &SecretDefaultConfig::fields(),
-        ".",
-        "",
-        "_",
-    );
+    let md = configulator::__schema::markdown(&SecretDefaultConfig::fields(), ".", "", "_");
     for out in [&schema, &sample, &md] {
         assert!(!out.contains("hunter2"), "{out}");
     }
@@ -1615,7 +1602,7 @@ struct ShortFlagConfig {
 #[test]
 fn markdown_flag_column_shows_shorthand() {
     use configulator::HasShadow;
-    let md = configulator::__schema::markdown("S", &ShortFlagConfig::fields(), ".", "", "_");
+    let md = configulator::__schema::markdown(&ShortFlagConfig::fields(), ".", "", "_");
     assert!(md.contains("| `-p`, `--port` |"), "{md}");
     assert!(md.contains("| `--host` "), "{md}");
     assert!(!md.contains("`-x`"), "{md}");

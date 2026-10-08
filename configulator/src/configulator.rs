@@ -264,14 +264,14 @@ impl<C: HasShadow> Configulator<C> {
     /// `allow_unknown_fields`. Same output as the Go generator's `-schema`
     /// flag.
     pub fn json_schema() -> String {
-        crate::schema::json_schema(type_basename::<C>(), &C::fields(), C::ALLOW_UNKNOWN_FIELDS)
+        crate::schema::json_schema(&C::fields(), C::ALLOW_UNKNOWN_FIELDS)
     }
 
     /// Render a commented YAML sample config: every key at its default,
     /// descriptions as comments, secrets redacted. Same output as the Go
     /// generator's `-sample` flag.
     pub fn sample_config() -> String {
-        crate::schema::sample_config(type_basename::<C>(), &C::fields())
+        crate::schema::sample_config(&C::fields())
     }
 
     /// Get the default config (all defaults applied, no other sources).
@@ -349,12 +349,6 @@ fn binary_name() -> String {
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "app".to_string())
-}
-
-/// The config type's bare name (no module path), for schema titles.
-fn type_basename<C>() -> &'static str {
-    let full = std::any::type_name::<C>();
-    full.rsplit("::").next().unwrap_or(full)
 }
 
 #[cfg(feature = "env")]
