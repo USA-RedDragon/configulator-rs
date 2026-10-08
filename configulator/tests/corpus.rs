@@ -1,6 +1,6 @@
 //! Conformance corpus runner: executes every case under the shared
 //! `spec/cases/` directory (from the configulator Go repo, which owns the
-//! SPEC) against the five corpus shapes.
+//! SPEC) against the corpus shapes in `spec/shapes.md`.
 //!
 //! The spec directory is located via `CONFIGULATOR_SPEC_DIR`, falling back
 //! to a sibling checkout at `../configulator/spec`. Cases listed in
@@ -118,6 +118,46 @@ struct Durations {
     label: String,
 }
 
+#[derive(Config, Debug)]
+struct NestedCollections {
+    #[configulator(name = "peers", nested)]
+    peers: Vec<NcPeer>,
+    #[configulator(name = "by-name", nested)]
+    by_name: HashMap<String, NcPeer>,
+}
+
+#[derive(Config, Debug)]
+struct NcPeer {
+    #[configulator(name = "name")]
+    name: String,
+    #[configulator(name = "slots", default = "3")]
+    slots: i64,
+    #[configulator(name = "rules", nested)]
+    rules: Vec<NcRule>,
+    #[configulator(name = "tags", nested)]
+    tags: HashMap<String, NcRule>,
+    #[configulator(name = "inner", nested)]
+    inner: NcLevel,
+    #[configulator(name = "opt", nested)]
+    opt: Option<NcLevel>,
+}
+
+#[derive(Config, Debug)]
+struct NcRule {
+    #[configulator(name = "from")]
+    from: i64,
+    #[configulator(name = "range", default = "1")]
+    range: i64,
+    #[configulator(name = "on", default = "true")]
+    on: bool,
+}
+
+#[derive(Config, Debug)]
+struct NcLevel {
+    #[configulator(name = "level", default = "7")]
+    level: i64,
+}
+
 macro_rules! ok_validate {
     ($($t:ty),*) => {
         $(impl Validate for $t {
@@ -127,7 +167,14 @@ macro_rules! ok_validate {
         })*
     };
 }
-ok_validate!(Scalars, Nested, Collections, Optionals, Durations);
+ok_validate!(
+    Scalars,
+    Nested,
+    Collections,
+    Optionals,
+    Durations,
+    NestedCollections
+);
 
 trait ToJson {
     fn to_json(&self) -> Value;
@@ -183,6 +230,38 @@ impl ToJson for Optionals {
 impl ToJson for Durations {
     fn to_json(&self) -> Value {
         json!({"timeout": self.timeout.to_string(), "label": self.label})
+    }
+}
+
+impl ToJson for NcRule {
+    fn to_json(&self) -> Value {
+        json!({"from": self.from, "range": self.range, "on": self.on})
+    }
+}
+
+impl ToJson for NcPeer {
+    fn to_json(&self) -> Value {
+        json!({
+            "name": self.name,
+            "slots": self.slots,
+            "rules": self.rules.iter().map(ToJson::to_json).collect::<Vec<_>>(),
+            "tags": self.tags.iter()
+                .map(|(k, r)| (k.clone(), r.to_json()))
+                .collect::<serde_json::Map<_, _>>(),
+            "inner": {"level": self.inner.level},
+            "opt": self.opt.as_ref().map(|l| json!({"level": l.level})),
+        })
+    }
+}
+
+impl ToJson for NestedCollections {
+    fn to_json(&self) -> Value {
+        json!({
+            "peers": self.peers.iter().map(ToJson::to_json).collect::<Vec<_>>(),
+            "by-name": self.by_name.iter()
+                .map(|(k, p)| (k.clone(), p.to_json()))
+                .collect::<serde_json::Map<_, _>>(),
+        })
     }
 }
 
@@ -403,6 +482,7 @@ fn corpus() {
             "collections" => check_case::<Collections>(&case),
             "optionals" => check_case::<Optionals>(&case),
             "durations" => check_case::<Durations>(&case),
+            "nested-collections" => check_case::<NestedCollections>(&case),
             other => Err(format!("unknown shape {other:?}")),
         };
         ran += 1;
