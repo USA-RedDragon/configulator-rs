@@ -118,6 +118,9 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 - `print_config()` prints one `path = value` line per field in Go's
   `PrintConfig` format, and `defaults()` returns the config with only
   defaults applied
+- `command()` returns the clap `Command` that loading parses, for shell
+  completions with `clap_complete`. `--config` and `PathBuf` fields complete
+  as paths
 - [configulator-cli](configulator-cli) prints a JSON Schema, a sample config
   file (YAML, JSON or TOML), or a Markdown table of every option
 
@@ -126,7 +129,7 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 | Attribute | Meaning |
 | --- | --- |
 | `name = "key"` | Key in files, env and flags. Defaults to the field name |
-| `default = "value"` | Default value, parsed with `FromStr` |
+| `default = "value"` | Default value, parsed with `FromStr`. An empty default is a compile error |
 | `description = "text"` | Flag help text, and the description in generated docs |
 | `nested` | The field (or its `Vec`/map element, or `Option` inner type) is a struct that derives `Config` |
 | `env = "NAME"` | Use `NAME` for this field's part of the env var name. `env = "-"` skips env |
@@ -193,6 +196,7 @@ the version that matches your configulator-rs.
 | `--sample-file` | With `--sample`, write the sample to a file, such as `config.example.yaml` |
 | `--markdown-file` | With `--markdown`, write the table into a file between the configulator markers |
 | `--check` | With `--sample-file` or `--markdown-file`, exit 1 if the file is out of date instead of writing it |
+| `--completions` | Print a completion script for a shell (`bash`, `zsh`, `fish`, `elvish`, `powershell`) |
 
 ## Generated config docs
 
