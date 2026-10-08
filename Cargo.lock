@@ -120,6 +120,7 @@ dependencies = [
  "configulator-derive",
  "configulator-rs",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
  "tempfile",
  "trybuild",
