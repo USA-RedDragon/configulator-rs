@@ -268,6 +268,7 @@
 #[cfg(feature = "cli")]
 mod cli;
 mod configulator;
+mod duration;
 mod defaults;
 mod derive_helpers;
 #[cfg(feature = "env")]
@@ -284,6 +285,7 @@ pub use configulator_derive::Config;
 
 // Re-export public types
 pub use crate::configulator::Configulator;
+pub use crate::duration::Duration;
 pub use crate::error::ConfigulatorError;
 #[cfg(feature = "cli")]
 pub use crate::options::CLIFlagOptions;
