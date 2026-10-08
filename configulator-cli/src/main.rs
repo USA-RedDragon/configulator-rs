@@ -733,7 +733,8 @@ fn write_toml_table(out: &mut String, pairs: &[(String, Sv)], path: &[String]) {
             Sv::Seq(items) => {
                 if items.iter().any(toml_too_big) {
                     out.push_str(&format!(
-                        "# {k} holds a number too large for a TOML integer, written as a string\n"
+                        "# {} holds a number too large for a TOML integer, written as a string\n",
+                        toml_key(k)
                     ));
                 }
                 let items: Vec<String> = items.iter().map(toml_scalar).collect();
@@ -742,7 +743,8 @@ fn write_toml_table(out: &mut String, pairs: &[(String, Sv)], path: &[String]) {
             v => {
                 if toml_too_big(v) {
                     out.push_str(&format!(
-                        "# {k} is too large for a TOML integer, so it's written as a string\n"
+                        "# {} is too large for a TOML integer, so it's written as a string\n",
+                        toml_key(k)
                     ));
                 }
                 out.push_str(&format!("{} = {}\n", toml_key(k), toml_scalar(v)));
@@ -1190,7 +1192,7 @@ ctl = "a\u0001\u007F\"\\\t"
 bigs = [1, "18446744073709551615"]
 
 ["odd.key"]
-# in ner is too large for a TOML integer, so it's written as a string
+# "in ner" is too large for a TOML integer, so it's written as a string
 "in ner" = "18446744073709551615"
 "#
         );

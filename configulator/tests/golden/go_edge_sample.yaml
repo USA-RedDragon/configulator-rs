@@ -3,7 +3,7 @@ nan: .nan
 infs: [1, -.inf]
 one: true
 eff: false
-bad: [1, x]
+bad: []
 ctl: "a\x01\x7f\"\\\t"
 bigs: [1, 18446744073709551615]
 odd.key:

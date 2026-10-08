@@ -2254,3 +2254,19 @@ fn decode_errors_name_full_paths() {
         .to_string();
     assert!(m.contains("database.pool.size: "), "{m}");
 }
+
+#[allow(dead_code)]
+#[derive(Config, Debug)]
+struct MarkdownControlConfig {
+    #[configulator(name = "sep", default = "a\tb", description = "line\nbreak")]
+    sep: String,
+}
+
+#[test]
+fn markdown_escapes_control_characters_like_go() {
+    use configulator::HasShadow;
+    let md = configulator::__schema::markdown(&MarkdownControlConfig::fields(), ".", "", "_");
+    assert!(md.contains("`a\\tb`"), "{md}");
+    assert!(md.contains("line\\nbreak"), "{md}");
+    assert_eq!(md.lines().count(), 5, "{md}");
+}

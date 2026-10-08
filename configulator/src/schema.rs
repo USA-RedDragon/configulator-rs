@@ -423,11 +423,26 @@ fn sample_value(f: &FieldInfo) -> String {
             FieldType::Scalar if quotes(f.scalar) => go_quote(default),
             FieldType::Scalar if f.scalar == ScalarHint::Float => yaml_float(default),
             FieldType::List => {
+                let elem = FieldInfo {
+                    field_type: FieldType::Scalar,
+                    ..f.clone()
+                };
+                let parses = |item: &str| match f.scalar {
+                    ScalarHint::Float => item.parse::<f64>().is_ok(),
+                    _ => schema_default(&elem, item).is_some(),
+                };
+                if !default.split(',').all(parses) {
+                    return "[]".to_string();
+                }
                 let items: Vec<String> = default
                     .split(',')
                     .map(|item| match f.scalar {
                         h if quotes(h) => go_quote(item),
                         ScalarHint::Float => yaml_float(item),
+                        ScalarHint::Bool => match schema_default(&elem, item) {
+                            Some(J::Raw(b)) => b,
+                            _ => item.to_string(),
+                        },
                         _ => item.to_string(),
                     })
                     .collect();
@@ -482,7 +497,18 @@ const HEADER: [&str; 6] = [
 
 fn render_table(mut rows: Vec<[String; 6]>) -> String {
     for cell in rows.iter_mut().flatten() {
-        *cell = cell.replace('|', "\\|");
+        let escaped: String = cell
+            .chars()
+            .map(|c| {
+                if c.is_control() {
+                    let q = go_quote(&c.to_string());
+                    q[1..q.len() - 1].to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect();
+        *cell = escaped.replace('|', "\\|");
     }
     let mut widths: Vec<usize> = HEADER.iter().map(|h| h.chars().count()).collect();
     for row in &rows {
