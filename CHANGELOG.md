@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.3.0
+
+Go parity release, checked against the shared spec 0.2.0 (58 cases).
+
+### Added
+
+- `configulator::Complex64` and `Complex128`, parsed and printed like Go
+  (`1+2i`, `(1-2i)`, `3`), with an optional `num-complex` feature.
+- `defaults()`, the config with only defaults applied, using the builder's
+  array separator and skipping `required` checks, like Go's `Default()`.
+- Flag help shows each field's default (never a secret's), and `--config` is
+  labelled "config file" with the first search path as its default.
+- `env = "NAME"` and `flag = "name"` work on lists of scalars.
+- Shell completion: `Configulator::command()` returns the clap `Command`
+  for `clap_complete`, `--config` and `PathBuf` fields carry path hints, and
+  `configulator --completions <shell>` prints the CLI's own script.
+- Error variants `DecodeError { path, message }`,
+  `SearchPathUnreadable { path, message }`, and `searched` on `FileNotFound`.
+  `ParseError` has `path` (the config path) and `source` (the env var,
+  `--flag` or `default tag`).
+- configulator-cli: Go-compatible output byte for byte (JSON Schema, YAML,
+  JSON and TOML samples, Markdown table), a Duration sample of `"0s"`, `|`
+  escaped in Markdown cells, and a `--check` hint that repeats the full
+  command.
+
+### Changed (breaking)
+
+- Config files are strict about scalar types: `port: "80"`, `name: 5`,
+  `verbose: "true"` and `count: 1.5` are errors. An integer for a float field
+  is fine.
+- An empty env separator means `_` instead of `__`. Set `separator: "__"`
+  to keep the old names.
+- configulator-cli's `--env-separator` defaults to `_`.
+- Error messages use Go's wording, for example
+  `port: cannot parse "x" from APP_PORT: ...` and
+  `tls.cert: required but not set by any layer`. `FileError` is replaced by
+  `DecodeError` and `SearchPathUnreadable`, and `BadEnvOptions` and
+  `FlagConflict` are struct variants.
+- `print_config()` uses Go's `PrintConfig` format: strings unquoted, lists as
+  `[a b]`, maps as `map[k:v]`, `<unset>` for unset optionals, and a
+  collection holding a secret printed as `(redacted)`.
+- Default origins are reported as `default tag` instead of `default`.
+- `default = ""` is a compile error, like Go. Remove it; the zero value is
+  used anyway.
+- Generated titles no longer include the type name: the JSON Schema title is
+  `Configuration`, the sample starts `# Sample configuration` and the
+  Markdown table `# Configuration`.
+- configulator-cli usage errors exit 2, and all errors start with
+  `configulator: `.
+
+### Fixed
+
+- An empty config file loads as no keys instead of failing to decode, and
+  `Report::file()` names the loaded file even when nothing from it survived.
+- No error message repeats a secret's value, including the parser's own text.
+- Durations above Go's maximum (`2562047h47m16.854775807s`) are an error.
+- `required` is checked inside list and map elements.
+
 ## 0.2.4
 
 - `required` is checked inside list and map elements. A missing field fails
