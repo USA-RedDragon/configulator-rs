@@ -22,8 +22,10 @@ Go parity release, checked against the shared spec 0.2.0 (58 cases).
   `--flag` or `default tag`).
 - configulator-cli: Go-compatible output byte for byte (JSON Schema, YAML,
   JSON and TOML samples, Markdown table), a Duration sample of `"0s"`, `|`
-  escaped in Markdown cells, and a `--check` hint that repeats the full
-  command.
+  escaped in Markdown cells, bool defaults normalized (`"1"` shows as
+  `true`), NaN and infinity spelled per format, TOML strings and keys
+  escaped for TOML, and a `--check` hint that repeats the run's own
+  arguments.
 
 ### Changed (breaking)
 
