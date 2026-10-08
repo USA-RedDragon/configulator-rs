@@ -45,28 +45,34 @@ fn check_free(
     long: &str,
     short: Option<char>,
 ) -> Result<(), ConfigulatorError> {
+    let conflict = |shorthand: Option<char>, existing: &str| ConfigulatorError::FlagConflict {
+        flag: long.to_string(),
+        shorthand,
+        existing: existing.to_string(),
+    };
     for a in cmd.get_arguments() {
+        let existing = a.get_long().unwrap_or(a.get_id().as_str());
         if a.get_id() == long || a.get_long() == Some(long) {
-            return Err(ConfigulatorError::FlagConflict(format!("--{long}")));
+            return Err(conflict(None, existing));
         }
         if let Some(c) = short.filter(|c| a.get_short() == Some(*c)) {
-            return Err(ConfigulatorError::FlagConflict(format!("-{c}")));
+            return Err(conflict(Some(c), existing));
         }
     }
     if !cmd.is_disable_help_flag_set() {
         if long == "help" {
-            return Err(ConfigulatorError::FlagConflict("--help".into()));
+            return Err(conflict(None, "help"));
         }
         if short == Some('h') {
-            return Err(ConfigulatorError::FlagConflict("-h".into()));
+            return Err(conflict(Some('h'), "help"));
         }
     }
     if cmd.get_version().is_some() && !cmd.is_disable_version_flag_set() {
         if long == "version" {
-            return Err(ConfigulatorError::FlagConflict("--version".into()));
+            return Err(conflict(None, "version"));
         }
         if short == Some('V') {
-            return Err(ConfigulatorError::FlagConflict("-V".into()));
+            return Err(conflict(Some('V'), "version"));
         }
     }
     Ok(())

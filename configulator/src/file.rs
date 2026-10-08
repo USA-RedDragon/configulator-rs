@@ -22,7 +22,10 @@ where
     E: std::fmt::Display,
 {
     fn load(&self, contents: &str) -> Result<C::Shadow, ConfigulatorError> {
-        (self.0)(contents).map_err(|e| ConfigulatorError::FileError(e.to_string()))
+        (self.0)(contents).map_err(|e| ConfigulatorError::DecodeError {
+            path: std::path::PathBuf::new(),
+            message: e.to_string(),
+        })
     }
 }
 
@@ -60,36 +63,51 @@ pub(crate) fn load<C: HasShadow>(
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?;
-        return Ok(Some((parse(opts, &contents)?, path.display().to_string())));
+        return Ok(Some((
+            parse(opts, path, &contents)?,
+            path.display().to_string(),
+        )));
     }
 
     for path in &opts.paths {
         match std::fs::read_to_string(path) {
             Ok(contents) => {
-                return Ok(Some((parse(opts, &contents)?, path.display().to_string())));
+                return Ok(Some((
+                    parse(opts, path, &contents)?,
+                    path.display().to_string(),
+                )));
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
-                return Err(ConfigulatorError::FileError(format!(
-                    "{}: {e}",
-                    path.display()
-                )));
+                return Err(ConfigulatorError::SearchPathUnreadable {
+                    path: path.clone(),
+                    message: e.to_string(),
+                });
             }
         }
     }
 
     if opts.error_if_not_found {
-        return Err(ConfigulatorError::FileNotFound);
+        return Err(ConfigulatorError::FileNotFound {
+            searched: opts.paths.clone(),
+        });
     }
     Ok(None)
 }
 
 fn parse<C: HasShadow>(
     opts: &FileOptions<C>,
+    path: &Path,
     contents: &str,
 ) -> Result<C::Shadow, ConfigulatorError> {
     if contents.is_empty() {
         return Ok(C::Shadow::default());
     }
-    opts.loader.load(contents)
+    opts.loader.load(contents).map_err(|e| match e {
+        ConfigulatorError::DecodeError { message, .. } => ConfigulatorError::DecodeError {
+            path: path.to_path_buf(),
+            message,
+        },
+        other => other,
+    })
 }

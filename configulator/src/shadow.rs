@@ -17,7 +17,7 @@ pub trait HasShadow: Sized {
     type Shadow: Default;
 
     #[doc(hidden)]
-    fn shadow_defaults(array_sep: &str) -> Result<Self::Shadow, ConfigulatorError>;
+    fn shadow_defaults(prefix: &str, array_sep: &str) -> Result<Self::Shadow, ConfigulatorError>;
 
     #[doc(hidden)]
     fn overlay(
@@ -172,7 +172,8 @@ pub mod __private {
     /// so a custom `FromStr` type behaves identically in all four layers.
     pub fn parse_leaf<T: FromStr + 'static>(
         s: &str,
-        field: &str,
+        path: &str,
+        source: &str,
         secret: bool,
     ) -> Result<T, ConfigulatorError>
     where
@@ -189,7 +190,8 @@ pub mod __private {
                     .downcast::<T>()
                     .unwrap()),
                 None => Err(ConfigulatorError::ParseError {
-                    field: field.to_string(),
+                    path: path.to_string(),
+                    source: source.to_string(),
                     value: if secret {
                         "(redacted)".to_string()
                     } else {
@@ -200,7 +202,8 @@ pub mod __private {
             };
         }
         T::from_str(s).map_err(|e| ConfigulatorError::ParseError {
-            field: field.to_string(),
+            path: path.to_string(),
+            source: source.to_string(),
             value: if secret {
                 "(redacted)".to_string()
             } else {

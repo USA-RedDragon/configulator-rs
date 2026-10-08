@@ -652,6 +652,7 @@ fn emit_has_shadow(
             type Shadow = #shadow_ident;
 
             fn shadow_defaults(
+                prefix: &str,
                 array_sep: &str,
             ) -> ::std::result::Result<Self::Shadow, #cr::ConfigulatorError> {
                 #[allow(unused_mut, unused_variables)]
@@ -725,7 +726,12 @@ fn emit_defaults(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                     };
                     parts.push(quote! {
                         s.#ident = ::std::option::Option::Some(
-                            #cr::__private::parse_leaf::<#ty>(#default, #config_name, #secret)?,
+                            #cr::__private::parse_leaf::<#ty>(
+                                #default,
+                                &#cr::__private::join(prefix, #config_name),
+                                "default tag",
+                                #secret,
+                            )?,
                         );
                     });
                 }
@@ -737,8 +743,13 @@ fn emit_defaults(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                             #cr::__private::split_list(#default, array_sep)
                                 .into_iter()
                                 .map(|x| {
-                                    #cr::__private::parse_leaf::<#elem>(x, #config_name, #secret)
-                                        .map(#cr::__private::Leaf)
+                                    #cr::__private::parse_leaf::<#elem>(
+                                        x,
+                                        &#cr::__private::join(prefix, #config_name),
+                                        "default tag",
+                                        #secret,
+                                    )
+                                    .map(#cr::__private::Leaf)
                                 })
                                 .collect::<::std::result::Result<_, _>>()?,
                         );
@@ -748,7 +759,10 @@ fn emit_defaults(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
             Shape::Nested { ty, opt: false } => {
                 parts.push(quote! {
                     s.#ident = ::std::option::Option::Some(
-                        <#ty as #cr::HasShadow>::shadow_defaults(array_sep)?,
+                        <#ty as #cr::HasShadow>::shadow_defaults(
+                            &#cr::__private::join(prefix, #config_name),
+                            array_sep,
+                        )?,
                     );
                 });
             }
@@ -853,13 +867,13 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                     (Some(default), false) => quote! {{
                         let p = #cr::__private::join(prefix, #config_name);
                         report.__set(&p, #cr::Layer::Default, "element default".to_string());
-                        #cr::__private::parse_leaf::<#ty>(#default, #config_name, #secret)?
+                        #cr::__private::parse_leaf::<#ty>(#default, &p, "default tag", #secret)?
                     }},
                     (Some(default), true) => quote! {{
                         let p = #cr::__private::join(prefix, #config_name);
                         report.__set(&p, #cr::Layer::Default, "element default".to_string());
                         ::std::option::Option::Some(
-                            #cr::__private::parse_leaf::<#ty>(#default, #config_name, #secret)?,
+                            #cr::__private::parse_leaf::<#ty>(#default, &p, "default tag", #secret)?,
                         )
                     }},
                     (None, false) if required => {
@@ -888,7 +902,7 @@ fn emit_build(cr: &syn::Path, name: &syn::Ident, model: &[FieldModel]) -> TokenS
                         report.__set(&p, #cr::Layer::Default, "element default".to_string());
                         #cr::__private::split_list(#default, array_sep)
                             .into_iter()
-                            .map(|x| #cr::__private::parse_leaf::<#elem>(x, #config_name, #secret))
+                            .map(|x| #cr::__private::parse_leaf::<#elem>(x, &p, "default tag", #secret))
                             .collect::<::std::result::Result<_, _>>()?
                     }},
                     None if required => missing(quote!(::std::vec::Vec::new())),
@@ -1182,7 +1196,7 @@ fn emit_from_env(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                         let var = format!("{prefix}{}", #env_segment);
                         if let ::std::option::Option::Some(v) = get(&var) {
                             s.#ident = ::std::option::Option::Some(
-                                #cr::__private::parse_leaf::<#ty>(&v, &var, #secret)?,
+                                #cr::__private::parse_leaf::<#ty>(&v, "", &var, #secret)?,
                             );
                         }
                     }
@@ -1197,7 +1211,7 @@ fn emit_from_env(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                                 #cr::__private::split_list(&v, array_sep)
                                     .into_iter()
                                     .map(|x| {
-                                        #cr::__private::parse_leaf::<#elem>(x, &var, #secret)
+                                        #cr::__private::parse_leaf::<#elem>(x, "", &var, #secret)
                                             .map(#cr::__private::Leaf)
                                     })
                                     .collect::<::std::result::Result<_, _>>()?,
@@ -1264,6 +1278,7 @@ fn emit_from_cli(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                                 s.#ident = ::std::option::Option::Some(
                                     #cr::__private::parse_leaf::<#ty>(
                                         v,
+                                        "",
                                         &format!("--{flag}"),
                                         #secret,
                                     )?,
@@ -1289,6 +1304,7 @@ fn emit_from_cli(cr: &syn::Path, model: &[FieldModel]) -> TokenStream2 {
                                     vals.map(|v| {
                                         #cr::__private::parse_leaf::<#elem>(
                                             v,
+                                            "",
                                             &format!("--{flag}"),
                                             #secret,
                                         )

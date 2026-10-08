@@ -170,7 +170,7 @@ impl<C: HasShadow> Configulator<C> {
         let mut report = Report::default();
         let mut acc = C::Shadow::default();
 
-        let defaults = C::shadow_defaults(&self.array_separator)?;
+        let defaults = C::shadow_defaults("", &self.array_separator)?;
         C::overlay(
             &mut acc,
             defaults,
@@ -195,7 +195,8 @@ impl<C: HasShadow> Configulator<C> {
             )?;
             let (matches, config_path) =
                 cli::parse(cmd, &args, config_flag.as_ref().map(|f| f.name.as_str()))?;
-            let shadow = C::from_cli(&matches, "", &opts.separator)?;
+            let shadow = C::from_cli(&matches, "", &opts.separator)
+                .map_err(|e| with_path(e, &flag_name_map(&C::fields(), &opts.separator)))?;
             (Some(shadow), config_path, opts.separator.clone())
         } else {
             (None, None, String::new())
@@ -229,8 +230,9 @@ impl<C: HasShadow> Configulator<C> {
                 opts.separator.clone()
             };
             let getter = self.env_getter();
-            let shadow = C::from_env(getter.as_ref(), &opts.prefix, &sep, &self.array_separator)?;
             let names = env_name_map(&C::fields(), &opts.prefix, &sep);
+            let shadow = C::from_env(getter.as_ref(), &opts.prefix, &sep, &self.array_separator)
+                .map_err(|e| with_path(e, &names))?;
             C::overlay(
                 &mut acc,
                 shadow,
@@ -350,16 +352,18 @@ fn binary_name() -> String {
 #[cfg(feature = "env")]
 fn validate_env_options(opts: &EnvironmentVariableOptions) -> Result<(), ConfigulatorError> {
     if opts.prefix != opts.prefix.to_uppercase() {
-        return Err(ConfigulatorError::BadEnvOptions(format!(
-            "prefix {:?} must be uppercase",
-            opts.prefix
-        )));
+        return Err(ConfigulatorError::BadEnvOptions {
+            field: "Prefix",
+            value: opts.prefix.clone(),
+            reason: "must be uppercase; env names are constructed uppercase and a lowercase prefix can never match",
+        });
     }
     if opts.separator.contains('-') {
-        return Err(ConfigulatorError::BadEnvOptions(format!(
-            "separator {:?} must not contain '-'",
-            opts.separator
-        )));
+        return Err(ConfigulatorError::BadEnvOptions {
+            field: "Separator",
+            value: opts.separator.clone(),
+            reason: "must not contain \"-\"; tag-segment folding would desync the constructed name from the lookup name",
+        });
     }
     Ok(())
 }
@@ -467,7 +471,7 @@ fn check_required(
 fn defaults_with<C: HasShadow>(array_sep: &str) -> Result<C, ConfigulatorError> {
     let mut report = Report::default();
     let mut acc = C::Shadow::default();
-    let defaults = C::shadow_defaults(array_sep)?;
+    let defaults = C::shadow_defaults("", array_sep)?;
     C::overlay(
         &mut acc,
         defaults,
@@ -481,4 +485,26 @@ fn defaults_with<C: HasShadow>(array_sep: &str) -> Result<C, ConfigulatorError> 
         check_required: false,
     };
     C::build(acc, "", &ctx, &mut report)
+}
+
+#[cfg(any(feature = "env", feature = "cli"))]
+fn with_path(err: ConfigulatorError, names: &HashMap<String, String>) -> ConfigulatorError {
+    match err {
+        ConfigulatorError::ParseError {
+            path,
+            source,
+            value,
+            message,
+        } if path.is_empty() => ConfigulatorError::ParseError {
+            path: names
+                .iter()
+                .find(|(_, name)| **name == source)
+                .map(|(p, _)| p.clone())
+                .unwrap_or_else(|| source.clone()),
+            source,
+            value,
+            message,
+        },
+        other => other,
+    }
 }

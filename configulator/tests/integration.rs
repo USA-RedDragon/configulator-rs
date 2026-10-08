@@ -338,8 +338,10 @@ fn file_unknown_key_rejected() {
         .load()
         .unwrap_err();
     match err {
-        ConfigulatorError::FileError(msg) => assert!(msg.contains("nope"), "got: {msg}"),
-        other => panic!("expected FileError, got {other:?}"),
+        ConfigulatorError::DecodeError { message, .. } => {
+            assert!(message.contains("nope"), "got: {message}")
+        }
+        other => panic!("expected DecodeError, got {other:?}"),
     }
 }
 
@@ -351,8 +353,10 @@ fn file_parse_error_names_field() {
         .load()
         .unwrap_err();
     match err {
-        ConfigulatorError::FileError(msg) => assert!(msg.contains("port"), "got: {msg}"),
-        other => panic!("expected FileError, got {other:?}"),
+        ConfigulatorError::DecodeError { message, .. } => {
+            assert!(message.contains("port"), "got: {message}")
+        }
+        other => panic!("expected DecodeError, got {other:?}"),
     }
 }
 
@@ -389,7 +393,10 @@ fn file_not_found_soft_and_hard() {
         })
         .load()
         .unwrap_err();
-    assert!(matches!(err, ConfigulatorError::FileNotFound));
+    assert!(
+        matches!(err, ConfigulatorError::FileNotFound { .. }),
+        "{err}"
+    );
 }
 
 #[test]
@@ -499,7 +506,7 @@ fn file_custom_fromstr_leaf() {
         .load()
         .unwrap_err();
     match err {
-        ConfigulatorError::FileError(msg) => {
+        ConfigulatorError::DecodeError { message: msg, .. } => {
             assert!(msg.contains("bad log level"), "got: {msg}");
             assert!(msg.contains("level"), "field name in error: {msg}");
         }
@@ -592,8 +599,14 @@ fn env_parse_error_names_var() {
         .load()
         .unwrap_err();
     match err {
-        ConfigulatorError::ParseError { field, value, .. } => {
-            assert_eq!(field, "APP_PORT");
+        ConfigulatorError::ParseError {
+            path,
+            source,
+            value,
+            ..
+        } => {
+            assert_eq!(path, "port");
+            assert_eq!(source, "APP_PORT");
             assert_eq!(value, "lots");
         }
         other => panic!("expected ParseError, got {other:?}"),
@@ -606,7 +619,10 @@ fn env_bad_options() {
         .with_environment_variables(env_opts("app_"))
         .load()
         .unwrap_err();
-    assert!(matches!(err, ConfigulatorError::BadEnvOptions(_)));
+    assert!(
+        matches!(err, ConfigulatorError::BadEnvOptions { .. }),
+        "{err}"
+    );
 
     let err = Configulator::<SimpleConfig>::new()
         .with_environment_variables(EnvironmentVariableOptions {
@@ -615,7 +631,10 @@ fn env_bad_options() {
         })
         .load()
         .unwrap_err();
-    assert!(matches!(err, ConfigulatorError::BadEnvOptions(_)));
+    assert!(
+        matches!(err, ConfigulatorError::BadEnvOptions { .. }),
+        "{err}"
+    );
 }
 
 #[test]
@@ -769,7 +788,9 @@ fn cli_parse_error_names_flag() {
         .load()
         .unwrap_err();
     match err {
-        ConfigulatorError::ParseError { field, .. } => assert_eq!(field, "--port"),
+        ConfigulatorError::ParseError { path, source, .. } => {
+            assert_eq!((path.as_str(), source.as_str()), ("port", "--port"))
+        }
         other => panic!("expected ParseError, got {other:?}"),
     }
 }
@@ -900,7 +921,7 @@ fn version_flag_conflicts_only_when_the_command_has_a_version() {
         .load_without_validation()
         .unwrap_err();
     assert!(
-        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "--version"),
+        matches!(err, ConfigulatorError::FlagConflict { ref existing, shorthand: None, .. } if existing == "version"),
         "{err}"
     );
 
@@ -913,7 +934,13 @@ fn version_flag_conflicts_only_when_the_command_has_a_version() {
         .load_without_validation()
         .unwrap_err();
     assert!(
-        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "-V"),
+        matches!(
+            err,
+            ConfigulatorError::FlagConflict {
+                shorthand: Some('V'),
+                ..
+            }
+        ),
         "{err}"
     );
 }
@@ -1233,7 +1260,7 @@ fn flag_conflicts_are_errors_not_panics() {
         .load_without_validation()
         .unwrap_err();
     assert!(
-        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "-c"),
+        matches!(err, ConfigulatorError::FlagConflict { shorthand: Some('c'), ref existing, .. } if existing == "config"),
         "{err}"
     );
 
@@ -1245,7 +1272,13 @@ fn flag_conflicts_are_errors_not_panics() {
         .load_without_validation()
         .unwrap_err();
     assert!(
-        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "-p"),
+        matches!(
+            err,
+            ConfigulatorError::FlagConflict {
+                shorthand: Some('p'),
+                ..
+            }
+        ),
         "{err}"
     );
 
@@ -1258,7 +1291,7 @@ fn flag_conflicts_are_errors_not_panics() {
         .load_without_validation()
         .unwrap_err();
     assert!(
-        matches!(err, ConfigulatorError::FlagConflict(ref f) if f == "--port"),
+        matches!(err, ConfigulatorError::FlagConflict { ref flag, shorthand: None, .. } if flag == "port"),
         "{err}"
     );
 }
@@ -2130,4 +2163,56 @@ fn help_shows_defaults_but_not_secrets() {
         .load()
         .unwrap();
     assert_eq!(config.port, 9);
+}
+
+#[test]
+fn file_and_parse_errors_carry_paths_like_go() {
+    let f = yaml_file("port: [\n");
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(f.path()))
+        .load()
+        .unwrap_err();
+    assert!(
+        matches!(&err, ConfigulatorError::DecodeError { path, .. } if path == f.path()),
+        "{err}"
+    );
+    assert!(
+        err.to_string()
+            .starts_with(&format!("decoding {}: ", f.path().display())),
+        "{err}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(yaml_opts(dir.path()))
+        .load()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::SearchPathUnreadable { .. }),
+        "{err}"
+    );
+
+    let missing = dir.path().join("missing.yaml");
+    let err = Configulator::<SimpleConfig>::new()
+        .with_file(FileOptions {
+            paths: vec![missing.clone()],
+            error_if_not_found: true,
+            ..FileOptions::new(serde_loader(|s| serde_yaml_ng::from_str(s)))
+        })
+        .load()
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("no config file found; searched [{}]", missing.display())
+    );
+
+    let err = Configulator::<SimpleConfig>::new()
+        .with_environment_variables(env_opts("E_"))
+        .with_env_vars(env(&[("E_PORT", "x")]))
+        .load()
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "port: cannot parse \"x\" from E_PORT: invalid digit found in string"
+    );
 }

@@ -366,10 +366,13 @@ fn error_kind(err: &ConfigulatorError) -> &'static str {
     match err {
         ConfigulatorError::ExplicitFileError { .. } => "ExplicitFileMissing",
         ConfigulatorError::ParseError { .. } => "ParseError",
-        ConfigulatorError::BadEnvOptions(_) => "BadEnvOptions",
+        ConfigulatorError::BadEnvOptions { .. } => "BadEnvOptions",
         ConfigulatorError::ValidationError(_) => "ValidationError",
-        ConfigulatorError::FileError(msg) => {
-            if msg.contains("unknown field") {
+        ConfigulatorError::Required { .. } => "Required",
+        ConfigulatorError::SearchPathUnreadable { .. } => "SearchPathUnreadable",
+        ConfigulatorError::FileNotFound { .. } => "NoFileFound",
+        ConfigulatorError::DecodeError { message, .. } => {
+            if message.contains("unknown field") {
                 "UnknownKey"
             } else {
                 "ParseError"
