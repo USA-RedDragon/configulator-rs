@@ -1,10 +1,16 @@
 # Changelog
 
-## 0.2.1
+## 0.2.2
 
 - `--version` works when the app passes a `clap::Command` with `.version(...)`.
   It comes back as `CLIError`, like `--help`. A config field that uses
   `--version` or `-V` on such a command is a `FlagConflict`.
+- configulator-cli: `--sample-file` writes the sample config to a file, such as
+  `config.example.yaml`. `--markdown-file` writes the Markdown table into a
+  file between `<!-- configulator:begin -->` and `<!-- configulator:end -->`.
+  `--check` exits 1 instead of writing if either file is out of date.
+- pre-commit hooks `configulator-sample` and `configulator-markdown`.
+- An empty `default` shows as a blank cell in the Markdown table, as in Go.
 
 ## 0.2.0
 
