@@ -19,7 +19,7 @@ path = "src/main.rs"
 configulator-rs = { version = "0.3.1", path = "../configulator", default-features = false }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-syn = { version = "2", features = ["full", "extra-traits"] }
+syn = { version = "3", features = ["full", "extra-traits"] }
 
 [dev-dependencies]
 serde_json = "1"
