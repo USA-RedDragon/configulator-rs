@@ -225,7 +225,7 @@ configulator --type AppConfig --markdown --markdown-file README.md --env-prefix 
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/USA-RedDragon/configulator-rs
-    rev: v0.3.1
+    rev: v0.4.0
     hooks:
       - id: configulator-sample
         args: [--type, AppConfig, --sample-file, config.example.yaml]
