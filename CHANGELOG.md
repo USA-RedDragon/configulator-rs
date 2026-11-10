@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+### Changed (breaking)
+
+- `short = 'c'` is a compile error, like Go's generator. The file layer adds
+  `-c/--config`, so it used to compile and then fail at load with
+  `FlagConflict`. If `FileOptions::shorthand` is something else, set
+  `#[configulator(config_shorthand = "f")]` on the struct; if the app has no
+  config file, set `config_shorthand = ""`.
+
 ## 0.3.1
 
 Matches Go configulator v2.4's generated output:

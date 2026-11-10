@@ -134,12 +134,14 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 | `nested` | The field (or its `Vec`/map element, or `Option` inner type) is a struct that derives `Config` |
 | `env = "NAME"` | Use `NAME` for this field's part of the env var name. `env = "-"` skips env |
 | `flag = "name"` | Use `name` for this field's part of the flag name. `flag = "-"` skips flags |
-| `short = 'p'` | Flag shorthand |
+| `short = 'p'` | Flag shorthand. `c` is a compile error because the file layer adds `-c/--config` |
 | `secret` | Never show the value in output, errors, help or generated docs |
 | `required` | Loading fails if nothing sets it |
 
-On the struct: `#[configulator(allow_unknown_fields)]`, and
-`#[configulator(crate = "path")]` if you renamed the crate.
+On the struct: `#[configulator(allow_unknown_fields)]`,
+`#[configulator(crate = "path")]` if you renamed the crate, and
+`#[configulator(config_shorthand = "f")]` if `FileOptions::shorthand` is not
+`c` (`""` if the app has no config file and wants `-c` for a field).
 
 Env var names are the prefix plus each level's name, uppercased, with `-`
 turned into `_`, joined by the separator (`_` if left empty). The prefix is
