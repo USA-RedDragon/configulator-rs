@@ -33,6 +33,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
 struct StructAttrs {
     crate_path: Option<syn::Path>,
     allow_unknown_fields: bool,
+    config_shorthand: Option<Option<char>>,
 }
 
 fn parse_struct_attrs(attrs: &[syn::Attribute]) -> Result<StructAttrs, syn::Error> {
@@ -47,10 +48,22 @@ fn parse_struct_attrs(attrs: &[syn::Attribute]) -> Result<StructAttrs, syn::Erro
                 out.crate_path = Some(lit.parse()?);
             } else if meta.path.is_ident("allow_unknown_fields") {
                 out.allow_unknown_fields = true;
+            } else if meta.path.is_ident("config_shorthand") {
+                let lit: syn::LitStr = meta.value()?.parse()?;
+                let val = lit.value();
+                let mut chars = val.chars();
+                out.config_shorthand = Some(match (chars.next(), chars.next()) {
+                    (None, _) => None,
+                    (Some(c), None) => Some(c),
+                    _ => return Err(syn::Error::new_spanned(
+                        &lit,
+                        "`config_shorthand` must be one character, or \"\" to turn the check off",
+                    )),
+                });
             } else {
                 return Err(meta.error(
                     "unknown struct-level configulator attribute; \
-                     expected `crate` or `allow_unknown_fields`",
+                     expected `crate`, `allow_unknown_fields` or `config_shorthand`",
                 ));
             }
             Ok(())
@@ -454,6 +467,21 @@ fn derive_config_impl(input: &DeriveInput) -> Result<TokenStream2, syn::Error> {
     };
 
     let model = build_model(fields)?;
+    if let Some(c) = struct_attrs.config_shorthand.unwrap_or(Some('c')) {
+        if let Some(m) = model
+            .iter()
+            .find(|m| !m.skip_cli && m.attrs.short == Some(c))
+        {
+            return Err(syn::Error::new_spanned(
+                &m.ident,
+                format!(
+                    "short = '{c}' is the --config shorthand; pick another, or set \
+                     #[configulator(config_shorthand = \"...\")] to the shorthand \
+                     FileOptions uses (\"\" if the app has no config file)"
+                ),
+            ));
+        }
+    }
     let shadow_ident = format_ident!("__{}Shadow", name);
 
     let shadow_struct = emit_shadow_struct(&cr, vis, &shadow_ident, &model, &struct_attrs);

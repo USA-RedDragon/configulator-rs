@@ -1234,6 +1234,7 @@ fn unset_optional_section_skips_its_required_fields() {
 
 #[allow(dead_code)]
 #[derive(Config, Debug)]
+#[configulator(config_shorthand = "")]
 struct ShortCConfig {
     #[configulator(name = "concurrency", short = 'c', default = "1")]
     concurrency: u32,

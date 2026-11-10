@@ -1,0 +1,5 @@
+error: short = 'c' is the --config shorthand; pick another, or set #[configulator(config_shorthand = "...")] to the shorthand FileOptions uses ("" if the app has no config file)
+ --> tests/ui/short-config.rs:6:5
+  |
+6 |     concurrency: u32,
+  |     ^^^^^^^^^^^
