@@ -22,6 +22,10 @@ pub(crate) fn build_command(
     let mut cmd = base
         .unwrap_or_else(|| clap::Command::new(default_name.to_string()))
         .no_binary_name(true);
+    if cmd.get_bin_name().is_none() {
+        let name = cmd.get_name().to_string();
+        cmd = cmd.bin_name(name);
+    }
 
     if let Some(flag) = config_flag {
         check_free(&cmd, &flag.name, Some(flag.short))?;
