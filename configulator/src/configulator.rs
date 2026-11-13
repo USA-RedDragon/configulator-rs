@@ -18,6 +18,11 @@ use crate::report::{Layer, Report};
 use crate::shadow::HasShadow;
 use crate::Validate;
 
+#[cfg(feature = "cli")]
+type Matches = clap::ArgMatches;
+#[cfg(not(feature = "cli"))]
+type Matches = ();
+
 #[cfg(feature = "env")]
 type EnvGetter<'a> = Box<dyn Fn(&str) -> Option<String> + 'a>;
 
@@ -41,6 +46,8 @@ pub struct Configulator<C: HasShadow> {
     env_vars: Option<HashMap<String, String>>,
     #[cfg(feature = "cli")]
     cli_command: Option<clap::Command>,
+    #[cfg(feature = "cli")]
+    cli_matches: Option<clap::ArgMatches>,
     array_separator: String,
     _marker: PhantomData<C>,
 }
@@ -62,6 +69,8 @@ impl<C: HasShadow> Configulator<C> {
             env_vars: None,
             #[cfg(feature = "cli")]
             cli_command: None,
+            #[cfg(feature = "cli")]
+            cli_matches: None,
             array_separator: ",".to_string(),
             _marker: PhantomData,
         }
@@ -136,6 +145,19 @@ impl<C: HasShadow> Configulator<C> {
         self
     }
 
+    /// Read CLI flags from matches the app already parsed, instead of
+    /// parsing the args again. Build the command with
+    /// [`command`](Self::command), parse it, dispatch subcommands, then pass
+    /// the root matches (or a subcommand's: config flags are global, so
+    /// they are in both). Turns on the CLI layer, with `.` as the
+    /// separator unless [`with_cli_flags`](Self::with_cli_flags) sets one.
+    #[cfg(feature = "cli")]
+    #[must_use]
+    pub fn with_matches(mut self, matches: clap::ArgMatches) -> Self {
+        self.cli_matches = Some(matches);
+        self
+    }
+
     /// Load configuration, applying validation.
     pub fn load(self) -> Result<C, ConfigulatorError>
     where
@@ -150,7 +172,7 @@ impl<C: HasShadow> Configulator<C> {
 
     /// Load configuration without running validation.
     pub fn load_without_validation(self) -> Result<C, ConfigulatorError> {
-        self.load_impl().map(|(c, _)| c)
+        self.load_impl().map(|(c, _, _)| c)
     }
 
     /// Load configuration (with validation) alongside the per-field origin
@@ -159,14 +181,59 @@ impl<C: HasShadow> Configulator<C> {
     where
         C: Validate,
     {
-        let (config, report) = self.load_impl()?;
+        let (config, report, _) = self.load_impl()?;
         config
             .validate()
             .map_err(ConfigulatorError::ValidationError)?;
         Ok((config, report))
     }
 
-    fn load_impl(self) -> Result<(C, Report), ConfigulatorError> {
+    /// Load configuration (with validation) and return the parsed clap
+    /// matches too, for subcommands and positional args. Turns on the CLI
+    /// layer, with `.` as the separator unless
+    /// [`with_cli_flags`](Self::with_cli_flags) sets one.
+    #[cfg(feature = "cli")]
+    pub fn load_with_matches(mut self) -> Result<(C, clap::ArgMatches), ConfigulatorError>
+    where
+        C: Validate,
+    {
+        if self.cli_opts.is_none() {
+            self.cli_opts = Some(CLIFlagOptions {
+                separator: ".".into(),
+            });
+        }
+        let (config, _, matches) = self.load_impl()?;
+        config
+            .validate()
+            .map_err(ConfigulatorError::ValidationError)?;
+        Ok((config, matches.unwrap_or_default()))
+    }
+
+    #[cfg(feature = "cli")]
+    fn cli_separator(&self) -> Option<String> {
+        match (&self.cli_opts, &self.cli_matches) {
+            (Some(opts), _) => Some(opts.separator.clone()),
+            (None, Some(_)) => Some(".".to_string()),
+            (None, None) => None,
+        }
+    }
+
+    #[cfg(feature = "cli")]
+    fn cli_matches(&self, sep: &str) -> Result<clap::ArgMatches, ConfigulatorError> {
+        if let Some(matches) = &self.cli_matches {
+            return Ok(matches.clone());
+        }
+        let cmd = cli::build_command(
+            self.cli_command.clone(),
+            &C::fields(),
+            sep,
+            self.config_flag_spec(),
+            &binary_name(),
+        )?;
+        cli::parse(cmd, &self.get_cli_args())
+    }
+
+    fn load_impl(self) -> Result<(C, Report, Option<Matches>), ConfigulatorError> {
         let mut report = Report::default();
         let mut acc = C::Shadow::default();
 
@@ -183,24 +250,20 @@ impl<C: HasShadow> Configulator<C> {
         // CLI is parsed first to find --config, but its values merge last.
         #[cfg(feature = "cli")]
         #[cfg_attr(not(feature = "file"), allow(unused_variables))]
-        let (cli_shadow, cli_config_path, cli_sep) = if let Some(ref opts) = self.cli_opts {
-            let args = self.get_cli_args();
-            let config_flag = self.config_flag_spec();
-            let cmd = cli::build_command(
-                self.cli_command.clone(),
-                &C::fields(),
-                &opts.separator,
-                config_flag.clone(),
-                &binary_name(),
-            )?;
-            let (matches, config_path) =
-                cli::parse(cmd, &args, config_flag.as_ref().map(|f| f.name.as_str()))?;
-            let shadow = C::from_cli(&matches, "", &opts.separator)
-                .map_err(|e| with_path(e, &flag_name_map(&C::fields(), &opts.separator)))?;
-            (Some(shadow), config_path, opts.separator.clone())
-        } else {
-            (None, None, String::new())
-        };
+        let (cli_shadow, cli_config_path, cli_sep, matches) =
+            if let Some(sep) = self.cli_separator() {
+                let matches = self.cli_matches(&sep)?;
+                let config_flag = self.config_flag_spec();
+                let config_path =
+                    cli::config_path(&matches, config_flag.as_ref().map(|f| f.name.as_str()));
+                let shadow = C::from_cli(&matches, "", &sep)
+                    .map_err(|e| with_path(e, &flag_name_map(&C::fields(), &sep)))?;
+                (Some(shadow), config_path, sep, Some(matches))
+            } else {
+                (None, None, String::new(), None)
+            };
+        #[cfg(not(feature = "cli"))]
+        let matches = None;
 
         #[cfg(feature = "file")]
         if let Some(ref opts) = self.file_opts {
@@ -262,7 +325,7 @@ impl<C: HasShadow> Configulator<C> {
         };
         let config = C::build(acc, "", &ctx, &mut report)?;
         check_required(&C::fields(), "", &report)?;
-        Ok((config, report))
+        Ok((config, report, matches))
     }
 
     /// Render a JSON Schema (draft-07 subset) for the config type:

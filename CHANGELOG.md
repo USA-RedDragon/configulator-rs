@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1
+
+### Added
+
+- `load_with_matches()` returns the parsed clap `ArgMatches` with the
+  config, so apps with subcommands or positional args don't parse the args a
+  second time.
+- `with_matches()` loads CLI flags from matches the app parsed itself from
+  `command()`, instead of parsing again.
+
+### Changed
+
+- Config flags and `--config` are global, so they are accepted before or
+  after a subcommand and show in its `--help`.
+- `FlagConflict` also checks args on subcommands of the command passed to
+  `with_cli_command()`.
+
 ## 0.4.0
 
 ### Changed (breaking)

@@ -1,9 +1,6 @@
 use crate::error::ConfigulatorError;
 use crate::field_info::{FieldInfo, FieldType};
 
-/// Build the clap `Command` for a config's fields. Nested structs use the
-/// configured separator in flag names (`--database.host`). Collections
-/// and `flag = "-"` fields are skipped (SPEC rule 6).
 /// The `--config` flag: its name, shorthand, and the default shown in help.
 #[derive(Clone)]
 pub(crate) struct ConfigFlag {
@@ -12,6 +9,10 @@ pub(crate) struct ConfigFlag {
     pub default: Option<String>,
 }
 
+/// Build the clap `Command` for a config's fields. Nested structs use the
+/// configured separator in flag names (`--database.host`). Collections
+/// and `flag = "-"` fields are skipped. Every config arg is global, so it
+/// is accepted before or after a subcommand.
 pub(crate) fn build_command(
     base: Option<clap::Command>,
     fields: &[FieldInfo],
@@ -34,7 +35,8 @@ pub(crate) fn build_command(
             .long(flag.name)
             .help("config file")
             .value_hint(clap::ValueHint::FilePath)
-            .num_args(1);
+            .num_args(1)
+            .global(true);
         if let Some(default) = flag.default {
             arg = arg.default_value(default);
         }
@@ -46,6 +48,18 @@ pub(crate) fn build_command(
 }
 
 fn check_free(
+    cmd: &clap::Command,
+    long: &str,
+    short: Option<char>,
+) -> Result<(), ConfigulatorError> {
+    check_free_in(cmd, long, short)?;
+    for sub in cmd.get_subcommands() {
+        check_free(sub, long, short)?;
+    }
+    Ok(())
+}
+
+fn check_free_in(
     cmd: &clap::Command,
     long: &str,
     short: Option<char>,
@@ -119,7 +133,7 @@ fn register_args(
                 .action(clap::ArgAction::Append),
         };
         check_free(cmd, &flag_name, field.short)?;
-        let mut arg = arg;
+        let mut arg = arg.global(true);
         if let Some(desc) = field.description {
             arg = arg.help(desc);
         }
@@ -140,24 +154,22 @@ fn register_args(
     Ok(())
 }
 
-/// Parse args, returning the matches and the `--config` path if set.
-///
-/// clap errors, including `--help`/`--version`, are returned as
-/// `CLIError` for the app to handle.
+/// Parse args. clap errors, including `--help`/`--version`, are returned
+/// as `CLIError` for the app to handle.
 pub(crate) fn parse(
     cmd: clap::Command,
     args: &[String],
-    config_flag: Option<&str>,
-) -> Result<(clap::ArgMatches, Option<String>), ConfigulatorError> {
-    let matches = cmd
-        .try_get_matches_from(args)
-        .map_err(ConfigulatorError::CLIError)?;
-    let config_path = config_flag.and_then(|name| {
-        if matches.value_source(name) == Some(clap::parser::ValueSource::CommandLine) {
-            matches.get_one::<String>(name).cloned()
-        } else {
-            None
-        }
-    });
-    Ok((matches, config_path))
+) -> Result<clap::ArgMatches, ConfigulatorError> {
+    cmd.try_get_matches_from(args)
+        .map_err(ConfigulatorError::CLIError)
+}
+
+/// The `--config` path, if it was given on the command line.
+pub(crate) fn config_path(matches: &clap::ArgMatches, config_flag: Option<&str>) -> Option<String> {
+    let name = config_flag?;
+    if matches.value_source(name) == Some(clap::parser::ValueSource::CommandLine) {
+        matches.get_one::<String>(name).cloned()
+    } else {
+        None
+    }
 }

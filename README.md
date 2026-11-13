@@ -121,6 +121,12 @@ and [advanced](configulator/examples/advanced.rs) (custom `FromStr` types).
 - `command()` returns the clap `Command` that loading parses, for shell
   completions with `clap_complete`. `--config` and `PathBuf` fields complete
   as paths
+- Subcommands and positional args: add them to the command you pass to
+  `with_cli_command()`. `load_with_matches()` returns the clap `ArgMatches`
+  with the config, so the app reads `subcommand()` and its positional args
+  without parsing again. Or parse `command()` yourself and pass the matches to
+  `with_matches()`. Config flags are global, so they work before or after a
+  subcommand
 - [configulator-cli](configulator-cli) prints a JSON Schema, a sample config
   file (YAML, JSON or TOML), or a Markdown table of every option
 

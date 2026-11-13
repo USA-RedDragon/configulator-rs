@@ -157,6 +157,48 @@
 //! - Maps with scalar or nested struct values (file only)
 //! - Nested structs (must also derive `Config` and be marked `nested`)
 //!
+//! ## Subcommands and Positional Args
+//!
+//! Add them to the command passed to
+//! [`with_cli_command`](Configulator::with_cli_command), then use
+//! [`load_with_matches`](Configulator::load_with_matches) to get the parsed
+//! [`ArgMatches`](clap::ArgMatches) back with the config. Config flags are
+//! global, so `app serve --port 9` and `app --port 9 serve` both set `port`.
+//!
+//! ```no_run
+//! # use configulator::{Config, Configulator, ConfigulatorError};
+//! # #[derive(Config)]
+//! # struct AppConfig {
+//! #     #[configulator(name = "port", default = "8080")]
+//! #     port: u16,
+//! # }
+//! # impl configulator::Validate for AppConfig {
+//! #     fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> { Ok(()) }
+//! # }
+//! let cmd = clap::Command::new("app")
+//!     .subcommand(clap::Command::new("serve"))
+//!     .subcommand(
+//!         clap::Command::new("migrate")
+//!             .arg(clap::Arg::new("dry-run").long("dry-run").action(clap::ArgAction::SetTrue)),
+//!     );
+//! let (cfg, matches) = match Configulator::<AppConfig>::new()
+//!     .with_cli_command(cmd)
+//!     .load_with_matches()
+//! {
+//!     Ok(loaded) => loaded,
+//!     Err(ConfigulatorError::CLIError(e)) => e.exit(),
+//!     Err(e) => panic!("{e}"),
+//! };
+//! match matches.subcommand() {
+//!     Some(("migrate", sub)) => println!("dry run: {}", sub.get_flag("dry-run")),
+//!     _ => println!("serving on {}", cfg.port),
+//! }
+//! ```
+//!
+//! To parse yourself, build the command with
+//! [`command`](Configulator::command), parse it, and pass the root or
+//! subcommand matches to [`with_matches`](Configulator::with_matches).
+//!
 //! ## Environment Variables
 //!
 //! Variable names are `prefix` + each config name in the path (uppercased,
