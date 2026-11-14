@@ -89,7 +89,7 @@ jobs:
     name: Conformance corpus (shared SPEC)
     runs-on: ubuntu-24.04
     env:
-      EXPECTED_SPEC_VERSION: 0.4.0
+      EXPECTED_SPEC_VERSION: 0.4.1
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -97,7 +97,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: USA-RedDragon/configulator
-          ref: df83586b1bf831a42124abccf352ee36fd6612fd
+          ref: 080168a45a1d8bc318fe59a24855c1f0cea642f2
           path: spec-repo
       - name: Verify SPEC pin
         run: |
