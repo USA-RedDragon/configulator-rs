@@ -21,7 +21,8 @@
 //! - `secret` redaction, `required` fields, and a generated `print_config()`
 //! - Go-style [`Duration`] (`"30s"`, `"1h30m"`)
 //! - Optional validation via the [`Validate`] trait
-//! - Boolean CLI flags (`--debug` sets true, `--debug false` sets false)
+//! - Boolean CLI flags (`--debug` sets true, `--debug=false` sets false; like
+//!   Go, `--debug false` leaves `false` as the next argument)
 //!
 //! ## Quick Start
 //!

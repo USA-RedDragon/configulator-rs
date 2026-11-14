@@ -257,3 +257,62 @@ fn load_with_matches_without_cli_flags_uses_dot() {
         .unwrap();
     assert_eq!(cfg.db.url, "pg://z");
 }
+
+#[derive(Config, Debug, PartialEq)]
+struct Flags {
+    #[configulator(name = "quiet", short = 'q', default = "false")]
+    quiet: bool,
+
+    #[configulator(name = "verbose", short = 'v', default = "false")]
+    verbose: bool,
+}
+
+impl Validate for Flags {
+    fn validate(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+}
+
+fn flags(args: &[&str]) -> Result<(Flags, clap::ArgMatches), ConfigulatorError> {
+    Configulator::<Flags>::new()
+        .with_cli_command(app())
+        .with_cli_args(args.iter().map(|s| s.to_string()).collect())
+        .load_with_matches()
+}
+
+#[test]
+fn bool_flag_does_not_take_the_next_arg() {
+    for args in [
+        &["-q", "serve"][..],
+        &["--quiet", "serve"][..],
+        &["serve", "-q"][..],
+        &["-qv", "serve"][..],
+    ] {
+        let (cfg, m) = flags(args).unwrap();
+        assert!(cfg.quiet, "{args:?}");
+        assert_eq!(m.subcommand_name(), Some("serve"), "{args:?}");
+    }
+    let (cfg, m) = flags(&["-q", "a", "b"]).unwrap();
+    assert!(cfg.quiet);
+    let targets: Vec<&String> = m.get_many("target").unwrap().collect();
+    assert_eq!(targets, ["a", "b"]);
+}
+
+#[test]
+fn bool_flag_value_needs_equals() {
+    for (args, quiet) in [
+        (&["--quiet=false"][..], false),
+        (&["--quiet=true"][..], true),
+        (&["--quiet=0"][..], false),
+        (&["-q=false"][..], false),
+        (&["-q"][..], true),
+        (&[][..], false),
+    ] {
+        let (cfg, _) = flags(args).unwrap();
+        assert_eq!(cfg.quiet, quiet, "{args:?}");
+    }
+    let (cfg, m) = flags(&["--quiet", "false"]).unwrap();
+    assert!(cfg.quiet);
+    let targets: Vec<&String> = m.get_many("target").unwrap().collect();
+    assert_eq!(targets, ["false"]);
+}

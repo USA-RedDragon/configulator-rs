@@ -123,7 +123,7 @@ fn register_args(
                 .long(flag_name.clone())
                 .num_args(0..=1)
                 .default_missing_value("true")
-                .require_equals(false),
+                .require_equals(true),
             FieldType::Scalar => clap::Arg::new(flag_name.clone())
                 .long(flag_name.clone())
                 .num_args(1),

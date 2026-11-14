@@ -709,10 +709,22 @@ fn cli_flags_scalars_and_bool() {
         .with_cli_flags(CLIFlagOptions {
             separator: ".".into(),
         })
-        .with_cli_args(args(&["--debug", "false"]))
+        .with_cli_args(args(&["--debug=false"]))
         .load()
         .unwrap();
-    assert!(!config.debug, "--debug false sets false");
+    assert!(!config.debug, "--debug=false sets false");
+
+    let err = Configulator::<SimpleConfig>::new()
+        .with_cli_flags(CLIFlagOptions {
+            separator: ".".into(),
+        })
+        .with_cli_args(args(&["--debug", "false"]))
+        .load()
+        .unwrap_err();
+    assert!(
+        matches!(err, ConfigulatorError::CLIError(ref e) if e.kind() == clap::error::ErrorKind::UnknownArgument),
+        "--debug false leaves false as an argument: {err:?}"
+    );
 }
 
 #[test]

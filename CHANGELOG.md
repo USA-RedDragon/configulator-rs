@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+### Changed (breaking)
+
+- A bool flag only takes a value with `=`: `--debug` and `-q` set true,
+  `--debug=false` and `-q=false` set false. `--debug false` used to set
+  false; now, like Go, `false` is the next argument. This fixes a bool flag
+  swallowing the next argument, so `app -q build` ran with `build` as the
+  value of `-q` instead of running the `build` subcommand.
+
 ## 0.4.1
 
 ### Added
